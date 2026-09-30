@@ -1,40 +1,78 @@
 #!/bin/sh
-# llok guest init (PID 1). Runs from the initramfs; the repo is a virtiofs share.
-export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+# llok guest init. Runs as PID 1 from the initramfs (stage 1). When a root
+# disk is attached it sets up a read-only root + tmpfs overlay and re-executes
+# itself after switch_root (stage 2). In build mode it installs the rootfs.
+export PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
 export TERM=xterm-256color
 
-mount -t proc proc /proc
-mount -t sysfs sys /sys
-mount -t devtmpfs dev /dev 2>/dev/null || mdev -s
-mkdir -p /dev/pts /tmp /run
-mount -t devpts devpts /dev/pts
-mount -t tmpfs tmpfs /tmp
-mount -t tmpfs tmpfs /run
-
-# Kernel modules we need that Alpine's linux-virt ships as modules.
-if [ -f /etc/llok/modules ]; then
-  while read -r m; do
-    [ -n "$m" ] && insmod "$m" 2>/dev/null
-  done < /etc/llok/modules
-fi
-
 # Out-of-band markers for the host: a private OSC that terminals ignore.
 marker() { printf '\033]7777;%s\033\\' "$1"; }
-
 cmdline_val() { sed -n "s/.*$1=\([^ ]*\).*/\1/p" /proc/cmdline; }
 b64_val() { v=$(cmdline_val "$1"); [ -n "$v" ] && echo "$v" | base64 -d; }
+die() { echo "llok: $*" >&2; marker "LLOK_EXIT 111"; sync; poweroff -f; }
 
+STAGE=${1:-1}
+
+if [ "$STAGE" = 1 ]; then
+  mount -t proc proc /proc
+  mount -t sysfs sys /sys
+  mount -t devtmpfs dev /dev 2>/dev/null || mdev -s
+  mkdir -p /dev/pts /tmp /run
+  mount -t devpts devpts /dev/pts
+  mount -t tmpfs tmpfs /tmp
+  mount -t tmpfs tmpfs /run
+  # Kernel modules Alpine's linux-virt ships as modules (ordered by dependency).
+  if [ -f /etc/llok/modules ]; then
+    while read -r m; do
+      [ -n "$m" ] && insmod "$m" 2>/dev/null
+    done < /etc/llok/modules
+  fi
+fi
+
+MODE=$(cmdline_val llok.mode); MODE=${MODE:-run}
 REPO=$(cmdline_val llok.repo); REPO=${REPO:-/repo}
 NAME=$(b64_val llok.name); NAME=${NAME:-project}
 COLS=$(cmdline_val llok.cols); ROWS=$(cmdline_val llok.rows)
+ROOT=$(cmdline_val llok.root)
 
-mkdir -p "$REPO"
-MOUNT_STATE="virtiofs, rw"
-if ! mount -t virtiofs repo "$REPO"; then
-  MOUNT_STATE="FAILED"
-  echo "llok: failed to mount repo share" >&2
+# ---- build mode: install the rootfs onto /dev/vda (network allowed) --------
+if [ "$MODE" = build ] && [ "$STAGE" = 1 ]; then
+  sh /etc/llok/build-rootfs.sh
+  rc=$?
+  marker "LLOK_EXIT $rc"
+  sync
+  poweroff -f
 fi
+
+# ---- stage 1 with a root disk: read-only root + tmpfs overlay, switch_root --
+if [ "$STAGE" = 1 ] && [ "$ROOT" = 1 ]; then
+  mkdir -p /rom /overlay /newroot
+  mount -t ext4 -o ro /dev/vda /rom || die "cannot mount root disk"
+  mount -t tmpfs tmpfs /overlay
+  mkdir -p /overlay/upper /overlay/work
+  mount -t overlay overlay -o lowerdir=/rom,upperdir=/overlay/upper,workdir=/overlay/work /newroot \
+    || die "overlay mount failed"
+  mkdir -p /newroot/etc/llok "/newroot$REPO"
+  cp /init /newroot/etc/llok/init
+  mount -t virtiofs repo "/newroot$REPO" || echo "llok: failed to mount repo share" >&2
+  for d in dev proc sys run tmp; do
+    mkdir -p "/newroot/$d"
+    mount --move "/$d" "/newroot/$d"
+  done
+  exec switch_root /newroot /bin/sh /etc/llok/init 2
+fi
+
+# ---- session (stage 2 on a root disk, or stage 1 initramfs-only) -----------
+if [ "$STAGE" = 1 ]; then
+  mkdir -p "$REPO"
+  mount -t virtiofs repo "$REPO" || echo "llok: failed to mount repo share" >&2
+  ROOTFS_DESC="initramfs, discarded at power off"
+else
+  ROOTFS_DESC="$(cat /etc/llok/rootfs-info 2>/dev/null || echo alpine) · overlay, discarded at power off"
+fi
+MOUNT_STATE="virtiofs, rw"
+mountpoint -q "$REPO" || MOUNT_STATE="FAILED"
 
 hostname llok 2>/dev/null
 [ -n "$COLS" ] && [ -n "$ROWS" ] && stty -F /dev/hvc0 cols "$COLS" rows "$ROWS" 2>/dev/null
@@ -42,6 +80,7 @@ hostname llok 2>/dev/null
 # Shell environment for interactive sessions.
 mkdir -p /etc/profile.d
 cat > /etc/profile.d/llok.sh <<PROFILE
+export PATH=/root/.local/bin:\$PATH
 export TERM=xterm-256color
 export LLOK_VM=1
 export LLOK_PROJECT="$NAME"
@@ -49,6 +88,7 @@ export PS1='\[\e[1;35m\]llok\[\e[0m\]\[\e[2m\]@$NAME\[\e[0m\] \[\e[1;34m\]\w\[\e
 alias ll='ls -la'
 PROFILE
 
+marker "LLOK_INFO rootfs=$ROOTFS_DESC"
 marker "LLOK_READY uptime=$(cut -d' ' -f1 /proc/uptime)s"
 
 banner() {
@@ -63,20 +103,23 @@ banner() {
   printf '\n'
   printf "  ${D}network${N}   ${G}none${N} ${D}(${IF} interface: lo only, no routes)${N}\n"
   printf "  ${D}repo${N}      ${REPO} ${D}(${MOUNT_STATE})${N}\n"
-  printf "  ${D}rootfs${N}    initramfs, discarded at power off\n"
+  printf "  ${D}rootfs${N}    ${ROOTFS_DESC}\n"
   printf "  ${D}exit${N}      type ${G}exit${N} to power off · ${G}Ctrl-] twice${N} forces it from the host\n"
   printf '\n'
 }
+
+SHELL_BIN=/bin/sh
+[ -x /bin/bash ] && SHELL_BIN=/bin/bash
 
 cd "$REPO" || cd /
 CMD_B64=$(cmdline_val llok.cmd)
 if [ -n "$CMD_B64" ]; then
   echo "$CMD_B64" | base64 -d > /tmp/llok-cmd.sh
-  LLOK_VM=1 LLOK_PROJECT="$NAME" sh /tmp/llok-cmd.sh
+  LLOK_VM=1 LLOK_PROJECT="$NAME" $SHELL_BIN /tmp/llok-cmd.sh
   marker "LLOK_EXIT $?"
 else
   banner > /dev/hvc0
-  setsid sh -c 'exec sh -l </dev/hvc0 >/dev/hvc0 2>&1'
+  setsid sh -c "exec $SHELL_BIN -l </dev/hvc0 >/dev/hvc0 2>&1"
   marker "LLOK_EXIT 0"
 fi
 

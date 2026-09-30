@@ -75,6 +75,7 @@ off from the host.`,
 			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP)
 			defer cancel()
 
+			rootfs, hasRootfs := guest.RootfsPath()
 			opts := vm.Options{
 				Kernel:      kernel,
 				Initrd:      initrd,
@@ -85,6 +86,11 @@ off from the host.`,
 				MemoryMB:    memMB,
 				Command:     command,
 				Interactive: interactive,
+			}
+			if hasRootfs {
+				opts.Disk = rootfs
+				opts.DiskReadOnly = true
+				opts.RootDisk = true
 			}
 
 			var sess *ui.Session

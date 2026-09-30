@@ -44,6 +44,7 @@ type Session struct {
 	dirty    bool
 	state    string // booting | running | stopped
 	bootTime string
+	rootfs   string
 	exitCode int
 	events   []string
 	start    time.Time
@@ -150,6 +151,16 @@ func (s *Session) Marker(m string) {
 		}
 		s.eventLocked("guest ready in " + s.bootTime + "s")
 		s.eventLocked("repo mounted at " + s.info.RepoVM)
+	case strings.HasPrefix(m, "LLOK_INFO"):
+		for _, kv := range strings.Fields(strings.TrimPrefix(m, "LLOK_INFO")) {
+			if v, ok := strings.CutPrefix(kv, "rootfs="); ok {
+				s.rootfs = v
+			}
+		}
+		// rootfs= value may contain spaces; take everything after the key.
+		if i := strings.Index(m, "rootfs="); i >= 0 {
+			s.rootfs = m[i+7:]
+		}
 	case strings.HasPrefix(m, "LLOK_EXIT"):
 		if c, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(m, "LLOK_EXIT"))); err == nil {
 			s.exitCode = c
@@ -294,6 +305,7 @@ func (s *Session) panelLines() []string {
 		kv("mount", s.info.RepoVM+sDim.Render(" (rw)")),
 		kv("vm", fmt.Sprintf("%d vCPU · %s", s.info.CPUs, mem)),
 		kv("kernel", s.info.Kernel),
+		kv("rootfs", shortRootfs(s.rootfs)),
 		kv("network", sOK.Render("none")),
 		kv("uptime", up),
 		kv("boot", boot),
@@ -317,6 +329,21 @@ func (s *Session) panelLines() []string {
 		}
 	}
 	return lines
+}
+
+// shortRootfs turns "alpine 3.22.6 · claude-code 2.1.92 · overlay, ..." into
+// the part that fits on one panel row.
+func shortRootfs(s string) string {
+	if s == "" {
+		return sDim.Render("…")
+	}
+	if i := strings.Index(s, " · overlay"); i >= 0 {
+		s = s[:i]
+	}
+	if strings.HasPrefix(s, "initramfs") {
+		return "initramfs only"
+	}
+	return s
 }
 
 func fmtDur(d time.Duration) string {

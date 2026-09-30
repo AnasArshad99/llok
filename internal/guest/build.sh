@@ -61,11 +61,15 @@ rm -rf "$ROOT"; mkdir -p "$ROOT"
 tar -xzf "$CACHE/$ROOTFS_FILE" -C "$ROOT"
 install -m 0755 "$INIT_SRC" "$ROOT/init"
 mkdir -p "$ROOT/etc/llok" "$ROOT/lib/modules/llok" "$ROOT/repo"
+install -m 0755 "$WORK/build-rootfs.sh" "$ROOT/etc/llok/build-rootfs.sh"
+echo "$ALPINE_BRANCH" > "$ROOT/etc/llok/alpine-branch"
 
 # Only the modules we need, decompressed so busybox insmod takes them by path.
 MODDIR=$(ls -d "$KDIR"/lib/modules/*)
 : > "$ROOT/etc/llok/modules"
-for name in fuse virtiofs vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
+for name in fuse virtiofs vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport \
+            virtio_blk crc16 mbcache jbd2 crc32c_generic ext4 overlay \
+            failover net_failover virtio_net; do
   src=$(find "$MODDIR" -name "$name.ko*" | head -1 || true)
   [ -n "$src" ] || continue
   case "$src" in

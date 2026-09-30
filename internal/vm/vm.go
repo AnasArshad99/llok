@@ -26,6 +26,12 @@ type Options struct {
 	Command        string // shell snippet run in the repo; empty means interactive shell
 	Interactive    bool
 
+	Disk         string // optional root disk image, attached as /dev/vda
+	DiskReadOnly bool
+	RootDisk     bool   // tell the guest to switch_root onto the disk
+	NAT          bool   // attach a NAT network device (builder VMs only!)
+	Mode         string // guest mode, e.g. "build"
+
 	Output   io.Writer // guest console output (default os.Stdout)
 	Input    io.Reader // guest console input (default os.Stdin)
 	Replies  io.Reader // optional second input: terminal query replies from a UI emulator
@@ -68,6 +74,12 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	}
 	if o.Command != "" {
 		cmdline += " llok.cmd=" + base64.StdEncoding.EncodeToString([]byte(o.Command))
+	}
+	if o.Mode != "" {
+		cmdline += " llok.mode=" + o.Mode
+	}
+	if o.RootDisk {
+		cmdline += " llok.root=1"
 	}
 	stdinFD := int(os.Stdin.Fd())
 	cols, rows := o.Cols, o.Rows
@@ -134,12 +146,43 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	fs.SetDirectoryShare(single)
 	cfg.SetDirectorySharingDevicesVirtualMachineConfiguration([]vz.DirectorySharingDeviceConfiguration{fs})
 
-	// vsock is the future broker channel. No network device is ever attached.
+	// vsock is the future broker channel.
 	vsock, err := vz.NewVirtioSocketDeviceConfiguration()
 	if err != nil {
 		return res, err
 	}
 	cfg.SetSocketDevicesVirtualMachineConfiguration([]vz.SocketDeviceConfiguration{vsock})
+
+	if o.Disk != "" {
+		att, err := vz.NewDiskImageStorageDeviceAttachment(o.Disk, o.DiskReadOnly)
+		if err != nil {
+			return res, fmt.Errorf("disk %s: %w", o.Disk, err)
+		}
+		blk, err := vz.NewVirtioBlockDeviceConfiguration(att)
+		if err != nil {
+			return res, err
+		}
+		cfg.SetStorageDevicesVirtualMachineConfiguration([]vz.StorageDeviceConfiguration{blk})
+	}
+
+	// No network device is ever attached to a session VM. Only the rootfs
+	// builder gets NAT, and it never sees a repo.
+	if o.NAT {
+		nat, err := vz.NewNATNetworkDeviceAttachment()
+		if err != nil {
+			return res, err
+		}
+		nic, err := vz.NewVirtioNetworkDeviceConfiguration(nat)
+		if err != nil {
+			return res, err
+		}
+		mac, err := vz.NewRandomLocallyAdministeredMACAddress()
+		if err != nil {
+			return res, err
+		}
+		nic.SetMACAddress(mac)
+		cfg.SetNetworkDevicesVirtualMachineConfiguration([]*vz.VirtioNetworkDeviceConfiguration{nic})
+	}
 
 	if ok, err := cfg.Validate(); !ok || err != nil {
 		return res, fmt.Errorf("invalid vm config: %w", err)
@@ -267,7 +310,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	if res.Forced {
 		return res, nil
 	}
-	if o.Command != "" && exitCode < 0 {
+	if (o.Command != "" || o.Mode != "") && exitCode < 0 {
 		return res, fmt.Errorf("guest stopped without reporting an exit status")
 	}
 	if exitCode < 0 {
