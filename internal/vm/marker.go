@@ -7,7 +7,9 @@ import (
 )
 
 // The guest sends control markers as a private OSC sequence:
-//   ESC ] 7777 ; <payload> ESC \      (or BEL as terminator)
+//
+//	ESC ] 7777 ; <payload> ESC \      (or BEL as terminator)
+//
 // Real terminals ignore unknown OSCs, but we strip them so logs stay clean
 // and hand the payload to a callback.
 var (

@@ -26,10 +26,10 @@ type Options struct {
 	Command        string // shell snippet run in the repo; empty means interactive shell
 	Interactive    bool
 
-	Output   io.Writer    // guest console output (default os.Stdout)
-	Input    io.Reader    // guest console input (default os.Stdin)
-	Replies  io.Reader    // optional second input: terminal query replies from a UI emulator
-	Cols     int          // terminal size reported to the guest (0 = detect)
+	Output   io.Writer // guest console output (default os.Stdout)
+	Input    io.Reader // guest console input (default os.Stdin)
+	Replies  io.Reader // optional second input: terminal query replies from a UI emulator
+	Cols     int       // terminal size reported to the guest (0 = detect)
 	Rows     int
 	OnMarker func(string) // called for each out-of-band guest marker
 }
