@@ -87,6 +87,7 @@ off from the host.`,
 				MemoryMB:    memMB,
 				Command:     command,
 				Interactive: interactive,
+				HideBanner:  useUI,
 			}
 			opts.NAT = devNAT
 			if hasRootfs {

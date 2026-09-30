@@ -56,25 +56,36 @@ type Session struct {
 
 const (
 	minPanelCols = 90 // below this width the panel is hidden
-	panelWidth   = 34
+	panelWidth   = 32
 )
 
 var (
 	colAccent = lipgloss.Color("#B57BEE")
-	colDim    = lipgloss.Color("#8A8A8A")
+	colDim    = lipgloss.Color("#7C7C86")
+	colFaint  = lipgloss.Color("#4A4A52")
 	colOK     = lipgloss.Color("#5AD48A")
 	colWarn   = lipgloss.Color("#F2C14E")
 	colErr    = lipgloss.Color("#F26D6D")
+	colText   = lipgloss.Color("#C8C8D0")
 
-	sTitle = lipgloss.NewStyle().Bold(true).Foreground(colAccent)
-	sDim   = lipgloss.NewStyle().Foreground(colDim)
-	sKey   = lipgloss.NewStyle().Foreground(colDim).Width(9).MaxWidth(9)
-	sOK    = lipgloss.NewStyle().Foreground(colOK)
-	sWarn  = lipgloss.NewStyle().Foreground(colWarn)
-	sErr   = lipgloss.NewStyle().Foreground(colErr)
-	sSep   = lipgloss.NewStyle().Foreground(lipgloss.Color("#3A3A3A"))
-	sHint  = lipgloss.NewStyle().Foreground(colOK)
+	sAccent = lipgloss.NewStyle().Foreground(colAccent)
+	sDim    = lipgloss.NewStyle().Foreground(colDim)
+	sFaint  = lipgloss.NewStyle().Foreground(colFaint)
+	sText   = lipgloss.NewStyle().Foreground(colText)
+	sKey    = lipgloss.NewStyle().Foreground(colDim).Width(8).MaxWidth(8)
+	sOK     = lipgloss.NewStyle().Foreground(colOK)
+	sWarn   = lipgloss.NewStyle().Foreground(colWarn)
+	sErr    = lipgloss.NewStyle().Foreground(colErr)
+	sSep    = lipgloss.NewStyle().Foreground(colFaint)
 )
+
+// logo is the llok wordmark shown at the top of the panel.
+var logo = []string{
+	"██  ██   ██████  ██  ██",
+	"██  ██  ██    ██  ████ ",
+	"██  ██  ██    ██  ██ ██",
+	"██████   ██████  ██  ██",
+}
 
 // New creates a session sized to the current terminal.
 func New(info Info) *Session {
@@ -93,18 +104,22 @@ func New(info Info) *Session {
 	return s
 }
 
-func (s *Session) layout() {
+func termSize() (cols, rows int) {
 	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || cols < 20 || rows < 5 {
-		cols, rows = 120, 40
+		return 120, 40
 	}
-	s.cols, s.rows = cols, rows
-	if cols >= minPanelCols {
+	return cols, rows
+}
+
+func (s *Session) layout() {
+	s.cols, s.rows = termSize()
+	if s.cols >= minPanelCols {
 		s.panelW = panelWidth
-		s.consoleW = cols - panelWidth - 1
+		s.consoleW = s.cols - panelWidth - 1
 	} else {
 		s.panelW = 0
-		s.consoleW = cols
+		s.consoleW = s.cols
 	}
 }
 
@@ -125,11 +140,6 @@ func (s *Session) Stop() {
 	fmt.Fprint(s.out, "\x1b[?25h\x1b[?1049l")
 }
 
-// Replies returns the stream of answers the emulator generates for terminal
-// queries the guest makes (cursor position, device attributes). It must be
-// drained into the guest's input or the emulator blocks.
-func (s *Session) Replies() io.Reader { return s.emu }
-
 // Write feeds guest console bytes into the emulator.
 func (s *Session) Write(p []byte) (int, error) {
 	s.mu.Lock()
@@ -139,11 +149,20 @@ func (s *Session) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// Replies returns the stream of answers the emulator generates for terminal
+// queries the guest makes (cursor position, device attributes). It must be
+// drained into the guest's input or the emulator blocks.
+func (s *Session) Replies() io.Reader { return s.emu }
+
 // Marker handles control markers the guest sends out of band.
 func (s *Session) Marker(m string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
+	case strings.HasPrefix(m, "LLOK_INFO"):
+		if i := strings.Index(m, "rootfs="); i >= 0 {
+			s.rootfs = m[i+7:]
+		}
 	case strings.HasPrefix(m, "LLOK_READY"):
 		s.state = "running"
 		if i := strings.Index(m, "uptime="); i >= 0 {
@@ -151,16 +170,6 @@ func (s *Session) Marker(m string) {
 		}
 		s.eventLocked("guest ready in " + s.bootTime + "s")
 		s.eventLocked("repo mounted at " + s.info.RepoVM)
-	case strings.HasPrefix(m, "LLOK_INFO"):
-		for _, kv := range strings.Fields(strings.TrimPrefix(m, "LLOK_INFO")) {
-			if v, ok := strings.CutPrefix(kv, "rootfs="); ok {
-				s.rootfs = v
-			}
-		}
-		// rootfs= value may contain spaces; take everything after the key.
-		if i := strings.Index(m, "rootfs="); i >= 0 {
-			s.rootfs = m[i+7:]
-		}
 	case strings.HasPrefix(m, "LLOK_EXIT"):
 		if c, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(m, "LLOK_EXIT"))); err == nil {
 			s.exitCode = c
@@ -188,7 +197,7 @@ func (s *Session) event(e string) {
 
 func (s *Session) eventLocked(e string) {
 	ts := time.Since(s.start).Round(time.Second)
-	s.events = append(s.events, fmt.Sprintf("%s %s", sDim.Render(fmtDur(ts)), e))
+	s.events = append(s.events, sFaint.Render(fmtDur(ts))+" "+sDim.Render(e))
 	if len(s.events) > 200 {
 		s.events = s.events[len(s.events)-200:]
 	}
@@ -210,11 +219,6 @@ func (s *Session) loop() {
 		case <-s.stop:
 			return
 		case <-winch:
-			s.mu.Lock()
-			s.layout()
-			s.emu.Resize(s.consoleW, s.rows)
-			s.dirty = true
-			s.mu.Unlock()
 			s.render(true)
 		case <-clock.C:
 			s.render(true)
@@ -227,6 +231,16 @@ func (s *Session) loop() {
 func (s *Session) render(force bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Re-detect the terminal size each frame: some hosts report the wrong
+	// size at startup and never send SIGWINCH, which would leave the UI
+	// smaller than the screen and looking scrollable.
+	if cols, rows := termSize(); cols != s.cols || rows != s.rows {
+		s.layout()
+		s.emu.Resize(s.consoleW, s.rows)
+		s.out.WriteString("\x1b[2J")
+		force = true
+	}
 	if !force && !s.dirty {
 		return
 	}
@@ -275,51 +289,53 @@ func (s *Session) panelLines() []string {
 	if s.panelW == 0 {
 		return nil
 	}
-	var st string
+	var dot, word string
 	switch s.state {
 	case "booting":
-		st = sWarn.Render("● booting")
+		dot, word = sWarn.Render("●"), sWarn.Render("booting")
 	case "running":
-		st = sOK.Render("● running")
+		dot, word = sOK.Render("●"), sOK.Render("running")
 	default:
-		st = sErr.Render("● stopped")
+		dot, word = sErr.Render("●"), sErr.Render("stopped")
 	}
-	kv := func(k, v string) string { return " " + sKey.Render(k) + " " + v }
+	kv := func(k, v string) string { return " " + sKey.Render(k) + " " + sText.Render(v) }
 	sep := " " + sSep.Render(strings.Repeat("─", s.panelW-2))
+
 	mem := fmt.Sprintf("%d MiB", s.info.MemoryMB)
 	if s.info.MemoryMB >= 1024 && s.info.MemoryMB%1024 == 0 {
 		mem = fmt.Sprintf("%d GiB", s.info.MemoryMB/1024)
 	}
-	up := fmtDur(time.Since(s.start).Round(time.Second))
-	boot := s.bootTime
-	if boot == "" {
-		boot = "…"
-	} else {
-		boot += "s"
+	boot := "…"
+	if s.bootTime != "" {
+		boot = s.bootTime + "s"
 	}
-	lines := []string{
-		" " + sTitle.Render("llok") + "  " + st,
+
+	var lines []string
+	lines = append(lines, "")
+	for _, l := range logo {
+		lines = append(lines, " "+sAccent.Render(l))
+	}
+	lines = append(lines,
 		"",
+		" "+dot+" "+word,
+		sep,
 		kv("project", s.info.Project),
 		kv("repo", shortPath(s.info.RepoHost, s.panelW-11)),
-		kv("mount", s.info.RepoVM+sDim.Render(" (rw)")),
+		kv("mount", s.info.RepoVM+sDim.Render(" rw")),
 		kv("vm", fmt.Sprintf("%d vCPU · %s", s.info.CPUs, mem)),
 		kv("kernel", s.info.Kernel),
 		kv("rootfs", shortRootfs(s.rootfs)),
 		kv("network", sOK.Render("none")),
-		kv("uptime", up),
+		kv("uptime", fmtDur(time.Since(s.start).Round(time.Second))),
 		kv("boot", boot),
-		"",
 		sep,
-		" " + sDim.Render("keys"),
 		kv("exit", "power off"),
-		kv("Ctrl-] ×2", "force off"),
-		"",
+		kv("C-] ×2", "force off"),
 		sep,
-		" " + sDim.Render("activity"),
-	}
+		" "+sDim.Render("activity"),
+	)
 	avail := s.rows - len(lines)
-	if avail > 0 {
+	if avail > 0 && len(s.events) > 0 {
 		ev := s.events
 		if len(ev) > avail {
 			ev = ev[len(ev)-avail:]
@@ -329,21 +345,6 @@ func (s *Session) panelLines() []string {
 		}
 	}
 	return lines
-}
-
-// shortRootfs turns "alpine 3.22.6 · claude-code 2.1.92 · overlay, ..." into
-// the part that fits on one panel row.
-func shortRootfs(s string) string {
-	if s == "" {
-		return sDim.Render("…")
-	}
-	if i := strings.Index(s, " · overlay"); i >= 0 {
-		s = s[:i]
-	}
-	if strings.HasPrefix(s, "initramfs") {
-		return "initramfs only"
-	}
-	return s
 }
 
 func fmtDur(d time.Duration) string {
@@ -359,4 +360,23 @@ func shortPath(p string, max int) string {
 		p = "…" + p[len(p)-(max-1):]
 	}
 	return p
+}
+
+// shortRootfs turns "alpine 3.22.6 · claude-code 2.1.92 · overlay, ..." into
+// the part that fits on one panel row.
+func shortRootfs(s string) string {
+	if s == "" {
+		return "…"
+	}
+	if i := strings.Index(s, " · overlay"); i >= 0 {
+		s = s[:i]
+	}
+	if strings.HasPrefix(s, "initramfs") {
+		return "initramfs only"
+	}
+	// Keep just the distro version; the full string lives nowhere else needed.
+	if i := strings.Index(s, " · "); i >= 0 {
+		return s[:i]
+	}
+	return s
 }

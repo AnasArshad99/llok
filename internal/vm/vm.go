@@ -26,6 +26,7 @@ type Options struct {
 	Command        string // shell snippet run in the repo; empty means interactive shell
 	Interactive    bool
 
+	HideBanner   bool   // suppress the in-guest banner (the host UI shows it instead)
 	Disk         string // optional root disk image, attached as /dev/vda
 	DiskReadOnly bool
 	RootDisk     bool   // tell the guest to switch_root onto the disk
@@ -80,6 +81,9 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	}
 	if o.RootDisk {
 		cmdline += " llok.root=1"
+	}
+	if o.HideBanner {
+		cmdline += " llok.banner=0"
 	}
 	stdinFD := int(os.Stdin.Fd())
 	cols, rows := o.Cols, o.Rows

@@ -34,6 +34,7 @@ MODE=$(cmdline_val llok.mode); MODE=${MODE:-run}
 REPO=$(cmdline_val llok.repo); REPO=${REPO:-/repo}
 NAME=$(b64_val llok.name); NAME=${NAME:-project}
 COLS=$(cmdline_val llok.cols); ROWS=$(cmdline_val llok.rows)
+BANNER=$(cmdline_val llok.banner)
 ROOT=$(cmdline_val llok.root)
 
 # ---- build mode: install the rootfs onto /dev/vda (network allowed) --------
@@ -118,7 +119,7 @@ if [ -n "$CMD_B64" ]; then
   LLOK_VM=1 LLOK_PROJECT="$NAME" $SHELL_BIN /tmp/llok-cmd.sh
   marker "LLOK_EXIT $?"
 else
-  banner > /dev/hvc0
+  [ "$BANNER" != 0 ] && banner > /dev/hvc0
   setsid sh -c "exec $SHELL_BIN -l </dev/hvc0 >/dev/hvc0 2>&1"
   marker "LLOK_EXIT 0"
 fi
