@@ -62,6 +62,8 @@ tar -xzf "$CACHE/$ROOTFS_FILE" -C "$ROOT"
 install -m 0755 "$INIT_SRC" "$ROOT/init"
 mkdir -p "$ROOT/etc/llok" "$ROOT/lib/modules/llok" "$ROOT/repo"
 install -m 0755 "$WORK/build-rootfs.sh" "$ROOT/etc/llok/build-rootfs.sh"
+mkdir -p "$ROOT/usr/local/bin"
+install -m 0755 "$WORK/llok-guest" "$ROOT/usr/local/bin/llok-guest"
 echo "$ALPINE_BRANCH" > "$ROOT/etc/llok/alpine-branch"
 
 # Only the modules we need, decompressed so busybox insmod takes them by path.
@@ -81,6 +83,6 @@ done
 log "modules: $(tr '\n' ' ' < "$ROOT/etc/llok/modules")"
 
 # Pack as a newc cpio, owned by root.
-(cd "$ROOT" && find . | bsdtar --format newc --uid 0 --gid 0 -cf - -T - ) | gzip -6 > "$OUT/initrd.cpio.gz"
+(cd "$ROOT" && find . | bsdtar --format newc --uid 0 --gid 0 -n -cf - -T - ) | gzip -6 > "$OUT/initrd.cpio.gz"
 log "initrd -> $OUT/initrd.cpio.gz ($(du -h "$OUT/initrd.cpio.gz" | cut -f1))"
 log "done"

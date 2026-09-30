@@ -3,9 +3,14 @@ PREFIX?=$(HOME)/.local
 MODULE=github.com/AnasArshad99/llok
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build guest run test clean install uninstall
+.PHONY: build guest guest-agent run test clean install uninstall
 
-build:
+# The in-VM agent, cross-compiled and embedded into llok.
+guest-agent:
+	mkdir -p internal/guest/bin
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "-s -w" -o internal/guest/bin/llok-guest ./cmd/llok-guest
+
+build: guest-agent
 	go build -ldflags "-X $(MODULE)/internal/cli.Version=$(VERSION)" -o $(BIN) ./cmd/llok
 	codesign --force --sign - --entitlements llok.entitlements $(BIN)
 

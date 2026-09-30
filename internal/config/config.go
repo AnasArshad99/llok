@@ -37,7 +37,7 @@ func Default() *Config {
 	c.VM.CPUs = 2
 	c.VM.MemoryMB = 1024
 	c.Mount.Repo = "/repo"
-	c.Network.Mode = "none"
+	c.Network.Mode = "broker"
 	return c
 }
 
@@ -58,8 +58,11 @@ vm:
 mount:
   repo: %s
 
-# The guest has no network device. In a later step the only way out will be
-# the llok broker on the host, and this is where you allow destinations.
+# The guest has no network device. Its only way out is the llok broker on
+# the host, which lets the agent reach its provider API with your credential
+# injected on the way out. Anything else must be listed under allow.
+#   mode: broker | none
+#   allow: extra hosts the agent may reach, e.g. registry.npmjs.org, "*.github.com"
 network:
   mode: %s
   allow: []
@@ -84,8 +87,8 @@ func Load(dir string) (*Config, error) {
 	if c.VM.CPUs == 0 || c.VM.MemoryMB == 0 {
 		return nil, fmt.Errorf("%s: vm.cpus and vm.memory_mb must be > 0", FileName)
 	}
-	if c.Network.Mode != "none" {
-		return nil, fmt.Errorf("%s: network.mode %q not supported yet (only \"none\")", FileName, c.Network.Mode)
+	if c.Network.Mode != "none" && c.Network.Mode != "broker" {
+		return nil, fmt.Errorf("%s: network.mode must be \"broker\" or \"none\"", FileName)
 	}
 	return c, nil
 }

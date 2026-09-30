@@ -35,6 +35,7 @@ REPO=$(cmdline_val llok.repo); REPO=${REPO:-/repo}
 NAME=$(b64_val llok.name); NAME=${NAME:-project}
 COLS=$(cmdline_val llok.cols); ROWS=$(cmdline_val llok.rows)
 BANNER=$(cmdline_val llok.banner)
+BROKER=$(cmdline_val llok.broker); CRED=$(cmdline_val llok.cred)
 ROOT=$(cmdline_val llok.root)
 
 # ---- build mode: install the rootfs onto /dev/vda (network allowed) --------
@@ -54,8 +55,9 @@ if [ "$STAGE" = 1 ] && [ "$ROOT" = 1 ]; then
   mkdir -p /overlay/upper /overlay/work
   mount -t overlay overlay -o lowerdir=/rom,upperdir=/overlay/upper,workdir=/overlay/work /newroot \
     || die "overlay mount failed"
-  mkdir -p /newroot/etc/llok "/newroot$REPO"
+  mkdir -p /newroot/etc/llok /newroot/usr/local/bin "/newroot$REPO"
   cp /init /newroot/etc/llok/init
+  cp /usr/local/bin/llok-guest /newroot/usr/local/bin/llok-guest 2>/dev/null
   mount -t virtiofs repo "/newroot$REPO" || echo "llok: failed to mount repo share" >&2
   for d in dev proc sys run tmp; do
     mkdir -p "/newroot/$d"
@@ -76,6 +78,32 @@ MOUNT_STATE="virtiofs, rw"
 mountpoint -q "$REPO" || MOUNT_STATE="FAILED"
 
 hostname llok 2>/dev/null
+ip link set lo up 2>/dev/null
+
+# The broker: the guest's only way out. llok-guest forwards 127.0.0.1:3128
+# over vsock to the host, which decides what may leave and injects the real
+# credential. The guest only ever holds a placeholder.
+BROKER_ENV=""
+if [ "$BROKER" = 1 ] && command -v llok-guest >/dev/null 2>&1; then
+  llok-guest proxy >/dev/null 2>&1 &
+  BROKER_ENV='export HTTP_PROXY=http://127.0.0.1:3128 HTTPS_PROXY=http://127.0.0.1:3128
+export http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY
+export NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost
+export ANTHROPIC_BASE_URL=http://127.0.0.1:3128'
+  case "$CRED" in
+    oauth)  BROKER_ENV="$BROKER_ENV
+export CLAUDE_CODE_OAUTH_TOKEN=llok-placeholder-token" ;;
+    *)      BROKER_ENV="$BROKER_ENV
+export ANTHROPIC_API_KEY=sk-ant-llok-placeholder" ;;
+  esac
+  NET_DESC="broker"
+else
+  NET_DESC="none"
+fi
+# Skip Claude Code's first-run questions: the home dir is fresh every boot.
+mkdir -p /root
+[ -f /root/.claude.json ] || printf '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"%s":{"hasTrustDialogAccepted":true}}}\n' "$REPO" > /root/.claude.json
+
 [ -n "$COLS" ] && [ -n "$ROWS" ] && stty -F /dev/hvc0 cols "$COLS" rows "$ROWS" 2>/dev/null
 
 # Shell environment for interactive sessions.
@@ -87,6 +115,7 @@ export LLOK_VM=1
 export LLOK_PROJECT="$NAME"
 export PS1='\[\e[1;35m\]llok\[\e[0m\]\[\e[2m\]@$NAME\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\] \[\e[1;35m\]#\[\e[0m\] '
 alias ll='ls -la'
+$BROKER_ENV
 PROFILE
 
 marker "LLOK_INFO rootfs=$ROOTFS_DESC"
@@ -102,7 +131,7 @@ banner() {
   printf "${P}  ██  ██  ██   ██  ██ ██ ${N}   ${D}kernel${N}  $(uname -r) ${D}on${N} $(uname -m)\n"
   printf "${P}  ██████   ██████  ██  ██${N}   ${D}cpu/mem${N} $(nproc) vCPU · ${MEM}\n"
   printf '\n'
-  printf "  ${D}network${N}   ${G}none${N} ${D}(${IF} interface: lo only, no routes)${N}\n"
+  printf "  ${D}network${N}   ${G}${NET_DESC}${N} ${D}(${IF} interface: lo only, no routes)${N}\n"
   printf "  ${D}repo${N}      ${REPO} ${D}(${MOUNT_STATE})${N}\n"
   printf "  ${D}rootfs${N}    ${ROOTFS_DESC}\n"
   printf "  ${D}exit${N}      type ${G}exit${N} to power off · ${G}Ctrl-] twice${N} forces it from the host\n"
@@ -116,7 +145,7 @@ cd "$REPO" || cd /
 CMD_B64=$(cmdline_val llok.cmd)
 if [ -n "$CMD_B64" ]; then
   echo "$CMD_B64" | base64 -d > /tmp/llok-cmd.sh
-  LLOK_VM=1 LLOK_PROJECT="$NAME" $SHELL_BIN /tmp/llok-cmd.sh
+  LLOK_VM=1 LLOK_PROJECT="$NAME" $SHELL_BIN -c ". /etc/profile.d/llok.sh; . /tmp/llok-cmd.sh"
   marker "LLOK_EXIT $?"
 else
   [ "$BANNER" != 0 ] && banner > /dev/hvc0

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/AnasArshad99/llok/internal/broker"
 	"github.com/AnasArshad99/llok/internal/config"
+	"github.com/AnasArshad99/llok/internal/creds"
 	"github.com/AnasArshad99/llok/internal/guest"
 	"github.com/AnasArshad99/llok/internal/ui"
 	"github.com/AnasArshad99/llok/internal/vm"
@@ -77,6 +80,25 @@ off from the host.`,
 			defer cancel()
 
 			rootfs, hasRootfs := guest.RootfsPath()
+
+			// The broker: only way out of the VM. Needs a stored credential.
+			var brk *broker.Broker
+			if cfg.Network.Mode == "broker" {
+				cred, err := creds.Get("anthropic")
+				if err != nil {
+					return fmt.Errorf("network.mode is broker but no Claude credential is stored; run: llok auth claude  (or set network.mode: none)")
+				}
+				home, _ := guest.Home()
+				os.MkdirAll(filepath.Join(home, "audit"), 0o700)
+				brk, err = broker.New(cfg.Name, broker.Policy{Allow: cfg.Network.Allow},
+					broker.Credential{Kind: cred.Kind, Secret: cred.Secret},
+					filepath.Join(home, "audit", "broker.jsonl"))
+				if err != nil {
+					return err
+				}
+				defer brk.Close()
+			}
+
 			opts := vm.Options{
 				Kernel:      kernel,
 				Initrd:      initrd,
@@ -95,10 +117,18 @@ off from the host.`,
 				opts.DiskReadOnly = true
 				opts.RootDisk = true
 			}
+			if brk != nil {
+				opts.Broker = true
+				opts.CredKind = brk.Cred.Kind
+				opts.VsockPort = 3128
+				opts.VsockServe = func(l net.Listener) { brk.Serve(l) }
+			}
 
 			var sess *ui.Session
 			if useUI {
 				sess = ui.New(ui.Info{
+					Network:  cfg.Network.Mode,
+					Allow:    len(cfg.Network.Allow),
 					Project:  cfg.Name,
 					RepoHost: absRepo,
 					RepoVM:   cfg.Mount.Repo,
@@ -111,6 +141,9 @@ off from the host.`,
 				opts.Input = sess.Input(os.Stdin)
 				opts.Replies = sess.Replies()
 				opts.OnMarker = sess.Marker
+				if brk != nil {
+					brk.OnEvent = func(e broker.Event) { sess.Event(e.Line()) }
+				}
 				sess.Start()
 			} else {
 				opts.Output = io.Writer(os.Stdout)

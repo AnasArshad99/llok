@@ -38,11 +38,16 @@ installer are planned once there are tagged releases.
 
 ```bash
 llok doctor       # checks hypervisor support, code signing, guest image
+llok auth claude  # sign in once; the token goes to your Keychain, never the VM
 cd your-repo
 llok init         # interactive setup, writes llok.yaml (use --yes for defaults)
-llok up           # shell inside the VM, repo at /repo; `exit` powers off
+llok up           # shell inside the VM, repo at /repo; run `claude` there
 llok up -c 'ls /repo && ip link'   # run one command and power off
 ```
+
+`llok auth claude` runs Claude Code's own `setup-token` login on your Mac and
+captures the token it prints. Use `llok auth claude --api-key` to store an
+Anthropic API key instead. `llok auth status` shows what is stored.
 
 `llok up` takes over the terminal: the guest console on the left, a status
 panel on the right (state, repo mapping, VM size, network, uptime, activity).
@@ -65,9 +70,16 @@ in `llok.yaml`.
   agent changes outside the repo disappears at power-off.
 - Repo sharing: virtiofs, read-write, mounted at `/repo`.
 - Network: no virtio-net device is attached to session VMs, so the guest has
-  only `lo`. Claude Code is installed but cannot reach the API until the
-  broker lands (next step).
-- vsock: attached now, used by the broker in a later step.
+  only `lo`. The only way out is the broker.
+- Broker: a tiny agent in the guest forwards `127.0.0.1:3128` over vsock to
+  llok on the host. Claude Code's API calls arrive there in the clear (it is
+  pointed at the broker via `ANTHROPIC_BASE_URL`); llok swaps the guest's
+  placeholder credential for the real one from your Keychain and opens the
+  TLS connection to `api.anthropic.com` itself. Everything else goes through
+  the proxy CONNECT path and must be listed under `network.allow` in
+  `llok.yaml`, or it is refused. Every decision is appended to
+  `~/.llok/audit/broker.jsonl` and shown in the session panel.
+- vsock: the broker channel. Nothing else listens on it.
 
 ## License
 

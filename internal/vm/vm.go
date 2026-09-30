@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"regexp"
 	"strconv"
@@ -26,8 +27,12 @@ type Options struct {
 	Command        string // shell snippet run in the repo; empty means interactive shell
 	Interactive    bool
 
-	HideBanner   bool   // suppress the in-guest banner (the host UI shows it instead)
-	Disk         string // optional root disk image, attached as /dev/vda
+	HideBanner   bool               // suppress the in-guest banner (the host UI shows it instead)
+	Broker       bool               // tell the guest to start the vsock forwarder and use the broker
+	CredKind     string             // "apikey" or "oauth": which placeholder env var the guest sets
+	VsockPort    uint32             // host vsock port to serve (0 = none)
+	VsockServe   func(net.Listener) // runs the broker on the vsock listener
+	Disk         string             // optional root disk image, attached as /dev/vda
 	DiskReadOnly bool
 	RootDisk     bool   // tell the guest to switch_root onto the disk
 	NAT          bool   // attach a NAT network device (builder VMs only!)
@@ -84,6 +89,9 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	}
 	if o.HideBanner {
 		cmdline += " llok.banner=0"
+	}
+	if o.Broker {
+		cmdline += " llok.broker=1 llok.cred=" + o.CredKind
 	}
 	stdinFD := int(os.Stdin.Fd())
 	cols, rows := o.Cols, o.Rows
@@ -282,6 +290,21 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		return res, fmt.Errorf("start vm: %w", err)
 	}
 
+	// The broker listens on vsock; the guest forwards 127.0.0.1:3128 to it.
+	var vl net.Listener
+	if o.VsockPort != 0 && o.VsockServe != nil {
+		devs := machine.SocketDevices()
+		if len(devs) == 0 {
+			return res, fmt.Errorf("no vsock device on the vm")
+		}
+		l, err := devs[0].Listen(o.VsockPort)
+		if err != nil {
+			return res, fmt.Errorf("vsock listen: %w", err)
+		}
+		vl = l
+		go o.VsockServe(l)
+	}
+
 	for running := true; running; {
 		select {
 		case st := <-machine.StateChangedNotify():
@@ -300,6 +323,9 @@ func Run(ctx context.Context, o Options) (Result, error) {
 				_ = machine.Stop()
 			}
 		}
+	}
+	if vl != nil {
+		vl.Close()
 	}
 	// The VM helper process keeps its own dup of the pipe's write end, so
 	// closing ours never yields EOF. Close the read end to unblock the copy.

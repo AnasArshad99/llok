@@ -22,6 +22,8 @@ import (
 
 // Info is the static information shown in the panel.
 type Info struct {
+	Network  string // "none" or "broker"
+	Allow    int    // extra allowed hosts
 	Project  string
 	RepoHost string
 	RepoVM   string
@@ -233,6 +235,9 @@ func (s *Session) Marker(m string) {
 	s.dirty = true
 }
 
+// Event appends a line to the activity log (broker decisions, etc).
+func (s *Session) Event(e string) { s.event(e) }
+
 // Stopped marks the VM as gone (forced stop or crash).
 func (s *Session) Stopped(reason string) {
 	s.mu.Lock()
@@ -382,7 +387,7 @@ func (s *Session) panelLines() []string {
 		kv("vm", fmt.Sprintf("%d vCPU · %s", s.info.CPUs, mem)),
 		kv("kernel", s.info.Kernel),
 		kv("rootfs", shortRootfs(s.rootfs)),
-		kv("network", sOK.Render("none")),
+		kv("network", s.networkDesc()),
 		kv("uptime", fmtDur(time.Since(s.start).Round(time.Second))),
 		kv("boot", boot),
 		sep,
@@ -403,6 +408,17 @@ func (s *Session) panelLines() []string {
 		}
 	}
 	return lines
+}
+
+func (s *Session) networkDesc() string {
+	if s.info.Network != "broker" {
+		return sOK.Render("none")
+	}
+	d := sAccent.Render("broker") + sDim.Render(" · api.anthropic.com")
+	if s.info.Allow > 0 {
+		d += sDim.Render(fmt.Sprintf(" +%d", s.info.Allow))
+	}
+	return d
 }
 
 func fmtDur(d time.Duration) string {

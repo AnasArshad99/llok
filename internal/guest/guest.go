@@ -24,6 +24,11 @@ var initScript []byte
 //go:embed build-rootfs.sh
 var rootfsScript []byte
 
+// llok-guest is cross-compiled for linux/arm64 by `make guest-agent`.
+//
+//go:embed bin/llok-guest
+var guestAgent []byte
+
 // RootfsSizeGiB is the (sparse) size of the root disk image.
 const RootfsSizeGiB = 8
 
@@ -151,6 +156,9 @@ func Build(ctx context.Context) error {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(work, "build-rootfs.sh"), rootfsScript, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(work, "llok-guest"), guestAgent, 0o755); err != nil {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, "/bin/bash", scriptPath)
