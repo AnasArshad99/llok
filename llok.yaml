@@ -1,0 +1,16 @@
+# llok policy. Everything the agent can touch is declared here.
+version: 1
+
+vm:
+  cpus: 2
+  memory_mb: 1024
+
+# The repo is mounted read-write at this path inside the guest.
+mount:
+  repo: /repo
+
+# The guest has no network device. In a later step the only way out will be
+# the llok broker on the host, and this is where you allow destinations.
+network:
+  mode: none
+  allow: []

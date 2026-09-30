@@ -1,0 +1,45 @@
+#!/bin/sh
+# llok guest init (PID 1). Runs from the initramfs; the repo is a virtiofs share.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export HOME=/root
+
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev 2>/dev/null || mdev -s
+mkdir -p /dev/pts /tmp /run
+mount -t devpts devpts /dev/pts
+mount -t tmpfs tmpfs /tmp
+mount -t tmpfs tmpfs /run
+
+# Kernel modules we need that Alpine's linux-virt ships as modules.
+if [ -f /etc/llok/modules ]; then
+  while read -r m; do
+    [ -n "$m" ] && insmod "$m" 2>/dev/null
+  done < /etc/llok/modules
+fi
+
+cmdline_val() { sed -n "s/.*$1=\([^ ]*\).*/\1/p" /proc/cmdline; }
+
+REPO=$(cmdline_val llok.repo); REPO=${REPO:-/repo}
+mkdir -p "$REPO"
+if ! mount -t virtiofs repo "$REPO"; then
+  echo "llok: failed to mount repo share" >&2
+fi
+
+hostname llok 2>/dev/null
+echo "LLOK_READY uptime=$(cut -d' ' -f1 /proc/uptime)s"
+
+cd "$REPO" || cd /
+CMD_B64=$(cmdline_val llok.cmd)
+if [ -n "$CMD_B64" ]; then
+  echo "$CMD_B64" | base64 -d > /tmp/llok-cmd.sh
+  sh /tmp/llok-cmd.sh
+  echo "LLOK_EXIT $?"
+else
+  echo "llok: interactive shell (exit to power off)"
+  setsid sh -c 'exec sh -l </dev/hvc0 >/dev/hvc0 2>&1'
+  echo "LLOK_EXIT 0"
+fi
+
+sync
+poweroff -f
