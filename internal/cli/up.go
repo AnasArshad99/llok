@@ -26,6 +26,7 @@ func newUpCmd() *cobra.Command {
 		repo    string
 		plain   bool
 		verbose bool
+		devNAT  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "up",
@@ -87,6 +88,7 @@ off from the host.`,
 				Command:     command,
 				Interactive: interactive,
 			}
+			opts.NAT = devNAT
 			if hasRootfs {
 				opts.Disk = rootfs
 				opts.DiskReadOnly = true
@@ -144,5 +146,7 @@ off from the host.`,
 	cmd.Flags().StringVar(&repo, "repo", ".", "repo directory to mount inside the VM")
 	cmd.Flags().BoolVar(&plain, "plain", false, "no full-screen UI; raw console in the current terminal")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print the boot summary and run summary")
+	cmd.Flags().BoolVar(&devNAT, "dev-nat", false, "DEVELOPMENT ONLY: attach a NAT network device")
+	_ = cmd.Flags().MarkHidden("dev-nat")
 	return cmd
 }

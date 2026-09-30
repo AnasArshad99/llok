@@ -69,7 +69,7 @@ MODDIR=$(ls -d "$KDIR"/lib/modules/*)
 : > "$ROOT/etc/llok/modules"
 for name in fuse virtiofs vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport \
             virtio_blk crc16 mbcache jbd2 crc32c_generic ext4 overlay \
-            failover net_failover virtio_net; do
+            failover net_failover virtio_net af_packet; do
   src=$(find "$MODDIR" -name "$name.ko*" | head -1 || true)
   [ -n "$src" ] || continue
   case "$src" in
