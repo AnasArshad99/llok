@@ -19,6 +19,9 @@ if [ -f /etc/llok/modules ]; then
   done < /etc/llok/modules
 fi
 
+# Out-of-band markers for the host: a private OSC that terminals ignore.
+marker() { printf '\033]7777;%s\033\\' "$1"; }
+
 cmdline_val() { sed -n "s/.*$1=\([^ ]*\).*/\1/p" /proc/cmdline; }
 b64_val() { v=$(cmdline_val "$1"); [ -n "$v" ] && echo "$v" | base64 -d; }
 
@@ -46,7 +49,7 @@ export PS1='\[\e[1;35m\]llok\[\e[0m\]\[\e[2m\]@$NAME\[\e[0m\] \[\e[1;34m\]\w\[\e
 alias ll='ls -la'
 PROFILE
 
-echo "LLOK_READY uptime=$(cut -d' ' -f1 /proc/uptime)s"
+marker "LLOK_READY uptime=$(cut -d' ' -f1 /proc/uptime)s"
 
 banner() {
   P='\033[1;35m'; D='\033[2m'; G='\033[32m'; N='\033[0m'
@@ -70,11 +73,11 @@ CMD_B64=$(cmdline_val llok.cmd)
 if [ -n "$CMD_B64" ]; then
   echo "$CMD_B64" | base64 -d > /tmp/llok-cmd.sh
   LLOK_VM=1 LLOK_PROJECT="$NAME" sh /tmp/llok-cmd.sh
-  echo "LLOK_EXIT $?"
+  marker "LLOK_EXIT $?"
 else
   banner > /dev/hvc0
   setsid sh -c 'exec sh -l </dev/hvc0 >/dev/hvc0 2>&1'
-  echo "LLOK_EXIT 0"
+  marker "LLOK_EXIT 0"
 fi
 
 sync

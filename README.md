@@ -29,9 +29,15 @@ llok up           # shell inside the VM, repo at /repo; `exit` powers off
 llok up -c 'ls /repo && ip link'   # run one command and power off
 ```
 
+`llok up` takes over the terminal: the guest console on the left, a status
+panel on the right (state, repo mapping, VM size, network, uptime, activity).
 Inside the VM you get a banner and a `llok@project /repo #` prompt so it is
 always obvious you are in the sandbox. Press Ctrl-] twice to force the VM off
-from the host if the guest is wedged.
+from the host. Use `llok up --plain` for a raw console without the panel.
+
+The path `/repo` is where your host folder appears inside the guest. It is
+the only writable thing that survives power-off; change it with `mount.repo`
+in `llok.yaml`.
 
 ## How it works
 

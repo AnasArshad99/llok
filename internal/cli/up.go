@@ -3,15 +3,18 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/muhammadanas/llok/internal/config"
 	"github.com/muhammadanas/llok/internal/guest"
+	"github.com/muhammadanas/llok/internal/ui"
 	"github.com/muhammadanas/llok/internal/vm"
 )
 
@@ -21,15 +24,17 @@ func newUpCmd() *cobra.Command {
 		cpus    uint
 		memMB   uint64
 		repo    string
-		quiet   bool
+		plain   bool
+		verbose bool
 	)
 	cmd := &cobra.Command{
 		Use:   "up",
-		Short: "Boot a locked microVM with the repo mounted at /repo",
+		Short: "Boot a locked microVM with the repo mounted inside",
 		Long: `Boots a fresh microVM with no network device attached and the repo shared
-read-write at /repo. With --cmd the command runs inside /repo and the VM powers
-off when it exits. Without --cmd you get an interactive shell in the guest.
-Press Ctrl-] twice to force the VM off from the host.`,
+read-write inside it. Without --cmd you get a full-screen session: the guest
+shell on the left, VM status on the right. With --cmd the command runs in the
+repo and the VM powers off when it exits. Press Ctrl-] twice to force the VM
+off from the host.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load(repo)
 			if err != nil {
@@ -51,14 +56,16 @@ Press Ctrl-] twice to force the VM off from the host.`,
 			}
 
 			interactive := command == ""
-			if !quiet {
+			useUI := interactive && isTTY() && !plain
+
+			if verbose || (interactive && !useUI) {
 				mode := "shell  " + styleDim.Render("(exit to power off · Ctrl-] twice to force)")
 				if !interactive {
 					mode = "run  " + styleDim.Render(command)
 				}
 				printBox("llok · booting locked VM", kv([][2]string{
 					{"project", cfg.Name},
-					{"repo", absRepo + "  →  /repo"},
+					{"repo", absRepo + "  →  " + cfg.Mount.Repo},
 					{"vm", fmt.Sprintf("%d vCPU · %d MiB · Alpine linux-virt", cpus, memMB)},
 					{"network", "none"},
 					{"mode", mode},
@@ -68,31 +75,68 @@ Press Ctrl-] twice to force the VM off from the host.`,
 			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP)
 			defer cancel()
 
-			code, err := vm.Run(ctx, vm.Options{
+			opts := vm.Options{
 				Kernel:      kernel,
 				Initrd:      initrd,
 				Repo:        absRepo,
+				RepoPath:    cfg.Mount.Repo,
 				Name:        cfg.Name,
 				CPUs:        cpus,
 				MemoryMB:    memMB,
 				Command:     command,
 				Interactive: interactive,
-				Log:         os.Stderr,
-			})
+			}
+
+			var sess *ui.Session
+			if useUI {
+				sess = ui.New(ui.Info{
+					Project:  cfg.Name,
+					RepoHost: absRepo,
+					RepoVM:   cfg.Mount.Repo,
+					CPUs:     cpus,
+					MemoryMB: memMB,
+					Kernel:   guest.KernelVersion(),
+				})
+				opts.Cols, opts.Rows = sess.ConsoleSize()
+				opts.Output = sess
+				opts.Replies = sess.Replies()
+				opts.OnMarker = sess.Marker
+				sess.Start()
+			} else {
+				opts.Output = io.Writer(os.Stdout)
+			}
+
+			res, err := vm.Run(ctx, opts)
+			if sess != nil {
+				sess.Stop()
+			}
 			if err != nil {
 				return err
 			}
-			if code != 0 {
-				fmt.Fprintln(os.Stderr, bad(fmt.Sprintf("guest command exited with status %d", code)))
-				os.Exit(code)
+
+			dur := res.Duration.Round(100 * time.Millisecond)
+			if res.Duration < time.Second {
+				dur = res.Duration.Round(time.Millisecond)
+			}
+			switch {
+			case res.Forced:
+				fmt.Fprintln(os.Stderr, styleWarn.Render("llok")+" · vm forced off after "+dur.String())
+			case res.ExitCode != 0:
+				fmt.Fprintln(os.Stderr, styleErr.Render("llok")+fmt.Sprintf(" · vm ran %s · exit %d", dur, res.ExitCode))
+				os.Exit(res.ExitCode)
+			default:
+				if interactive || verbose {
+					fmt.Fprintln(os.Stderr, styleTitle.Render("llok")+" · vm ran "+dur.String()+" · powered off")
+				}
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&command, "cmd", "c", "", "command to run inside /repo (non-interactive)")
+	cmd.Flags().StringVarP(&command, "cmd", "c", "", "command to run inside the repo (non-interactive)")
 	cmd.Flags().UintVar(&cpus, "cpus", 0, "vCPUs (default from llok.yaml)")
 	cmd.Flags().Uint64Var(&memMB, "mem", 0, "memory in MiB (default from llok.yaml)")
-	cmd.Flags().StringVar(&repo, "repo", ".", "repo directory to mount at /repo")
-	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "no banner")
+	cmd.Flags().StringVar(&repo, "repo", ".", "repo directory to mount inside the VM")
+	cmd.Flags().BoolVar(&plain, "plain", false, "no full-screen UI; raw console in the current terminal")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print the boot summary and run summary")
 	return cmd
 }

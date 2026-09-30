@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 //go:embed build.sh
@@ -43,6 +44,19 @@ func Paths() (kernel, initrd string, err error) {
 		}
 	}
 	return kernel, initrd, nil
+}
+
+// KernelVersion returns the guest kernel version recorded at build time, or "".
+func KernelVersion() string {
+	home, err := Home()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(home, "guest", "kernel.version"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // Build runs the embedded build script, which downloads Alpine's kernel and

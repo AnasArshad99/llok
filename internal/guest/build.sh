@@ -53,6 +53,7 @@ else
 fi
 [ "$(dd if="$OUT/Image" bs=1 skip=56 count=4 2>/dev/null)" = "ARMd" ] || { echo "kernel is not a raw arm64 Image" >&2; exit 1; }
 log "kernel -> $OUT/Image ($(du -h "$OUT/Image" | cut -f1))"
+basename "$(ls -d "$KDIR"/lib/modules/*)" > "$OUT/kernel.version"
 
 # Assemble the rootfs.
 ROOT=$WORK/rootfs
