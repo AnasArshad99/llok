@@ -25,5 +25,5 @@ func saneTerminal() {
 	t.Cc[unix.VTIME] = 0
 	_ = unix.IoctlSetTermios(fd, unix.TIOCSETA, t)
 	// Also leave the alternate screen in case it was never exited.
-	os.Stdout.WriteString("\x1b[?25h\x1b[?1049l")
+	os.Stdout.WriteString("\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l")
 }

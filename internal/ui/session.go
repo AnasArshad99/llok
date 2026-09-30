@@ -49,6 +49,7 @@ type Session struct {
 	events   []string
 	start    time.Time
 	cursorOn bool
+	scroll   int // lines scrolled back from the live view (0 = live)
 
 	stop chan struct{}
 	done chan struct{}
@@ -128,7 +129,7 @@ func (s *Session) ConsoleSize() (cols, rows int) { return s.consoleW, s.rows }
 
 // Start takes over the terminal and begins rendering.
 func (s *Session) Start() {
-	fmt.Fprint(s.out, "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H")
+	fmt.Fprint(s.out, "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H"+mouseOn)
 	s.event("vm starting")
 	go s.loop()
 }
@@ -137,7 +138,7 @@ func (s *Session) Start() {
 func (s *Session) Stop() {
 	close(s.stop)
 	<-s.done
-	fmt.Fprint(s.out, "\x1b[?25h\x1b[?1049l")
+	fmt.Fprint(s.out, mouseOff+"\x1b[?25h\x1b[?1049l")
 }
 
 // Write feeds guest console bytes into the emulator.
@@ -147,6 +148,58 @@ func (s *Session) Write(p []byte) (int, error) {
 	s.dirty = true
 	s.mu.Unlock()
 	return n, err
+}
+
+func (s *Session) scrollBy(n int) {
+	s.mu.Lock()
+	s.setScrollLocked(s.scroll + n)
+	s.mu.Unlock()
+}
+
+func (s *Session) scrollTo(n int) {
+	s.mu.Lock()
+	if s.scroll != n {
+		s.setScrollLocked(n)
+	}
+	s.mu.Unlock()
+}
+
+func (s *Session) setScrollLocked(n int) {
+	max := s.emu.ScrollbackLen()
+	if n > max {
+		n = max
+	}
+	if n < 0 {
+		n = 0
+	}
+	if n != s.scroll {
+		s.scroll = n
+		s.dirty = true
+	}
+}
+
+// consoleLines returns exactly s.rows rendered lines for the console pane,
+// taking the scrollback offset into account.
+func (s *Session) consoleLines() []string {
+	screen := strings.Split(s.emu.Render(), "\n")
+	for len(screen) < s.rows {
+		screen = append(screen, "")
+	}
+	screen = screen[:s.rows]
+	if s.scroll == 0 {
+		return screen
+	}
+	var all []string
+	for _, l := range s.emu.Scrollback().Lines() {
+		all = append(all, l.Render())
+	}
+	n := len(all)
+	if s.scroll > n {
+		s.scroll = n
+	}
+	all = append(all, screen...)
+	start := n - s.scroll
+	return all[start : start+s.rows]
 }
 
 // Replies returns the stream of answers the emulator generates for terminal
@@ -246,7 +299,7 @@ func (s *Session) render(force bool) {
 	}
 	s.dirty = false
 
-	lines := strings.Split(s.emu.Render(), "\n")
+	lines := s.consoleLines()
 	panel := s.panelLines()
 
 	var b strings.Builder
@@ -275,8 +328,12 @@ func (s *Session) render(force bool) {
 			}
 		}
 	}
+	if s.scroll > 0 {
+		tag := sWarn.Render(fmt.Sprintf(" ↑ %d lines · scroll or type to return ", s.scroll))
+		fmt.Fprintf(&b, "\x1b[1;%dH%s\x1b[m", max(1, s.consoleW-ansi.StringWidth(tag)+1), tag)
+	}
 	cur := s.emu.CursorPosition()
-	if s.cursorOn && cur.X < s.consoleW && cur.Y < s.rows {
+	if s.scroll == 0 && s.cursorOn && cur.X < s.consoleW && cur.Y < s.rows {
 		fmt.Fprintf(&b, "\x1b[%d;%dH\x1b[?25h", cur.Y+1, cur.X+1)
 	} else {
 		b.WriteString("\x1b[?25l")
@@ -331,6 +388,7 @@ func (s *Session) panelLines() []string {
 		sep,
 		kv("exit", "power off"),
 		kv("C-] ×2", "force off"),
+		kv("wheel", "scroll history"),
 		sep,
 		" "+sDim.Render("activity"),
 	)

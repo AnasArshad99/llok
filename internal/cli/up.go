@@ -108,6 +108,7 @@ off from the host.`,
 				})
 				opts.Cols, opts.Rows = sess.ConsoleSize()
 				opts.Output = sess
+				opts.Input = sess.Input(os.Stdin)
 				opts.Replies = sess.Replies()
 				opts.OnMarker = sess.Marker
 				sess.Start()
