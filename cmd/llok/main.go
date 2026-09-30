@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/muhammadanas/llok/internal/cli"
+	"github.com/AnasArshad99/llok/internal/cli"
 )
 
 func main() {

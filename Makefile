@@ -1,6 +1,6 @@
 BIN=llok
 PREFIX?=$(HOME)/.local
-MODULE=github.com/muhammadanas/llok
+MODULE=github.com/AnasArshad99/llok
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: build guest run test clean install uninstall

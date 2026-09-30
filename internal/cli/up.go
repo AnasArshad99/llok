@@ -12,10 +12,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/muhammadanas/llok/internal/config"
-	"github.com/muhammadanas/llok/internal/guest"
-	"github.com/muhammadanas/llok/internal/ui"
-	"github.com/muhammadanas/llok/internal/vm"
+	"github.com/AnasArshad99/llok/internal/config"
+	"github.com/AnasArshad99/llok/internal/guest"
+	"github.com/AnasArshad99/llok/internal/ui"
+	"github.com/AnasArshad99/llok/internal/vm"
 )
 
 func newUpCmd() *cobra.Command {

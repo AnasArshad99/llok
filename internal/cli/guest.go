@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/muhammadanas/llok/internal/guest"
+	"github.com/AnasArshad99/llok/internal/guest"
 )
 
 func newGuestCmd() *cobra.Command {

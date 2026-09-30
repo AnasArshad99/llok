@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/muhammadanas/llok/internal/config"
+	"github.com/AnasArshad99/llok/internal/config"
 )
 
 func newInitCmd() *cobra.Command {

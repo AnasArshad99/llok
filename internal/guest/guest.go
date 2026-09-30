@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/muhammadanas/llok/internal/vm"
+	"github.com/AnasArshad99/llok/internal/vm"
 )
 
 //go:embed build.sh

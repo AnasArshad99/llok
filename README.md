@@ -21,7 +21,7 @@ Linux/Firecracker backend come next.
 ## Install
 
 ```bash
-git clone https://github.com/muhammadanas/llok && cd llok
+git clone https://github.com/AnasArshad99/llok && cd llok
 make install      # builds, signs, and installs llok into ~/.local/bin
 llok guest build  # builds the guest image into ~/.llok (once, a few minutes)
 ```

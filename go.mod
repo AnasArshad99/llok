@@ -1,4 +1,4 @@
-module github.com/muhammadanas/llok
+module github.com/AnasArshad99/llok
 
 go 1.26.2
 
