@@ -112,9 +112,19 @@ export NODE_EXTRA_CA_CERTS=/run/llok/ca.pem SSL_CERT_FILE=/etc/ssl/certs/ca-cert
 else
   NET_DESC="none"
 fi
-# Skip Claude Code's first-run questions: the home dir is fresh every boot.
+# Skip Claude Code's first-run wizard (theme, sign-in, folder trust): the
+# credential comes from the environment and the home dir is fresh every boot.
+# The root disk may already carry a .claude.json from the installer, so merge.
 mkdir -p /root
-[ -f /root/.claude.json ] || printf '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"%s":{"hasTrustDialogAccepted":true}}}\n' "$REPO" > /root/.claude.json
+if command -v jq >/dev/null 2>&1; then
+  { [ -s /root/.claude.json ] && cat /root/.claude.json || echo '{}'; } \
+    | jq --arg repo "$REPO" '. + {hasCompletedOnboarding:true, theme:"dark"}
+        | .projects = (.projects // {})
+        | .projects[$repo] = ((.projects[$repo] // {}) + {hasTrustDialogAccepted:true})' \
+    > /tmp/.claude.json 2>/dev/null && mv /tmp/.claude.json /root/.claude.json
+else
+  printf '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"%s":{"hasTrustDialogAccepted":true}}}\n' "$REPO" > /root/.claude.json
+fi
 
 [ -n "$COLS" ] && [ -n "$ROWS" ] && stty -F /dev/hvc0 cols "$COLS" rows "$ROWS" 2>/dev/null
 
