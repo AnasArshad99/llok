@@ -27,6 +27,9 @@ func newRoot() *cobra.Command {
 		Long:          "llok boots a throwaway microVM with your repo inside and nothing else: no network, no host access, one audited channel out.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRun: func(*cobra.Command, []string) {
+			saneTerminal()
+		},
 	}
 	root.AddCommand(newInitCmd(), newUpCmd(), newGuestCmd(), newDoctorCmd(), newVersionCmd())
 	return root

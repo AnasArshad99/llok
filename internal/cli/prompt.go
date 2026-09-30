@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -117,24 +116,76 @@ func splitKeys(b []byte) []string {
 	return keys
 }
 
-// inputPrompt reads one line, returning def when the user just presses enter.
+// inputPrompt reads one line with its own echo and editing in raw mode, so it
+// renders correctly whatever state the terminal was left in. Enter on an
+// empty line returns def.
 func inputPrompt(title, desc, def string) (string, error) {
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
 		return def, nil
 	}
-	fmt.Fprintln(os.Stderr, stylePromptTitle.Render(title))
-	if desc != "" {
-		fmt.Fprintln(os.Stderr, stylePromptDesc.Render(desc))
-	}
-	fmt.Fprintf(os.Stderr, "  %s ", styleCursor.Render("❯")+stylePromptDesc.Render(" ["+def+"]"))
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	old, err := term.MakeRaw(fd)
 	if err != nil {
-		return "", errAborted
+		return def, nil
 	}
-	line = strings.TrimSpace(line)
-	if line == "" {
-		line = def
+	defer term.Restore(fd, old)
+
+	fmt.Fprint(os.Stderr, stylePromptTitle.Render(title)+"\r\n")
+	if desc != "" {
+		fmt.Fprint(os.Stderr, stylePromptDesc.Render(desc)+"\r\n")
 	}
-	fmt.Fprintf(os.Stderr, "\x1b[1A\x1b[J%s %s\n", stylePromptTitle.Render(title), styleSelected.Render(line))
-	return line, nil
+	prompt := "  " + styleCursor.Render("❯") + " "
+	var buf []byte
+	redraw := func() {
+		hint := ""
+		if len(buf) == 0 {
+			hint = stylePromptDesc.Render(def)
+		}
+		// Draw the hint, then park the cursor right after the prompt.
+		fmt.Fprintf(os.Stderr, "\r\x1b[K%s%s%s\r\x1b[%dC", prompt, string(buf), hint, ansiWidth(prompt)+len([]rune(string(buf))))
+	}
+	redraw()
+
+	in := make([]byte, 64)
+	for {
+		n, err := os.Stdin.Read(in)
+		if err != nil || n == 0 {
+			fmt.Fprint(os.Stderr, "\r\n")
+			return "", errAborted
+		}
+		for _, key := range splitKeys(in[:n]) {
+			switch key {
+			case "\r", "\n":
+				line := strings.TrimSpace(string(buf))
+				if line == "" {
+					line = def
+				}
+				fmt.Fprintf(os.Stderr, "\r\x1b[K%s %s\r\n", stylePromptTitle.Render(title), styleSelected.Render(line))
+				return line, nil
+			case "\x7f", "\b":
+				if r := []rune(string(buf)); len(r) > 0 {
+					buf = []byte(string(r[:len(r)-1]))
+				}
+			case "\x15": // ctrl-u
+				buf = buf[:0]
+			case "\x03", "\x1b":
+				fmt.Fprint(os.Stderr, "\r\n")
+				return "", errAborted
+			default:
+				if len(key) == 1 && key[0] < 0x20 {
+					continue // other control keys
+				}
+				if strings.HasPrefix(key, "\x1b") {
+					continue // arrows etc.
+				}
+				buf = append(buf, key...)
+			}
+		}
+		redraw()
+	}
+}
+
+// ansiWidth is the printed width of a styled string.
+func ansiWidth(s string) int {
+	return lipgloss.Width(s)
 }
