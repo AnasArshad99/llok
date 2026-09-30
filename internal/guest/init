@@ -11,6 +11,8 @@ marker() { printf '\033]7777;%s\033\\' "$1"; }
 cmdline_val() { sed -n "s/.*$1=\([^ ]*\).*/\1/p" /proc/cmdline; }
 b64_val() { v=$(cmdline_val "$1"); [ -n "$v" ] && echo "$v" | base64 -d; }
 die() { echo "llok: $*" >&2; marker "LLOK_EXIT 111"; sync; poweroff -f; }
+# Boot-stage timestamps into the kernel log: `dmesg | grep llok-init`.
+t() { echo "llok-init: $1" > /dev/kmsg 2>/dev/null; }
 
 STAGE=${1:-1}
 
@@ -28,6 +30,7 @@ if [ "$STAGE" = 1 ]; then
       [ -n "$m" ] && insmod "$m" 2>/dev/null
     done < /etc/llok/modules
   fi
+  t "modules loaded"
 fi
 
 if [ "$STAGE" = 1 ]; then
@@ -57,6 +60,7 @@ fi
 if [ "$STAGE" = 1 ] && [ "$ROOT" = 1 ]; then
   mkdir -p /rom /overlay /newroot
   mount -t ext4 -o ro /dev/vda /rom || die "cannot mount root disk"
+  t "root disk mounted"
   mount -t tmpfs tmpfs /overlay
   mkdir -p /overlay/upper /overlay/work
   mount -t overlay overlay -o lowerdir=/rom,upperdir=/overlay/upper,workdir=/overlay/work /newroot \
@@ -69,8 +73,10 @@ if [ "$STAGE" = 1 ] && [ "$ROOT" = 1 ]; then
     mkdir -p "/newroot/$d"
     mount --move "/$d" "/newroot/$d"
   done
+  t "switching root"
   exec switch_root /newroot /bin/sh /etc/llok/init 2
 fi
+t "session stage start"
 
 # ---- session (stage 2 on a root disk, or stage 1 initramfs-only) -----------
 if [ "$STAGE" = 1 ]; then
@@ -83,6 +89,7 @@ fi
 MOUNT_STATE="virtiofs, rw"
 mountpoint -q "$REPO" || MOUNT_STATE="FAILED"
 
+t "repo mounted"
 hostname llok 2>/dev/null
 ip link set lo up 2>/dev/null
 
@@ -113,6 +120,7 @@ export NODE_EXTRA_CA_CERTS=/run/llok/ca.pem SSL_CERT_FILE=/etc/ssl/certs/ca-cert
 else
   NET_DESC="none"
 fi
+t "broker set up"
 # Skip Claude Code's first-run wizard (theme, sign-in, folder trust): the
 # credential comes from the environment and the home dir is fresh every boot.
 # The root disk may already carry a .claude.json from the installer, so merge.
@@ -127,6 +135,7 @@ else
   printf '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"%s":{"hasTrustDialogAccepted":true}}}\n' "$REPO" > /root/.claude.json
 fi
 
+t "claude.json merged"
 [ -n "$COLS" ] && [ -n "$ROWS" ] && stty -F /dev/hvc0 cols "$COLS" rows "$ROWS" 2>/dev/null
 
 # Shell environment for interactive sessions.
@@ -142,6 +151,7 @@ $BROKER_ENV
 PROFILE
 
 marker "LLOK_INFO rootfs=$ROOTFS_DESC"
+t "ready"
 marker "LLOK_READY uptime=$(cut -d' ' -f1 /proc/uptime)s"
 
 banner() {
