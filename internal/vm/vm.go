@@ -72,10 +72,14 @@ func (h machineHandle) Resume() error {
 }
 
 func (h machineHandle) Stop() error {
+	// A paused VM cannot be stopped directly; resume it first.
+	if h.m.CanResume() {
+		_ = h.m.Resume()
+	}
 	if h.m.CanStop() {
 		return h.m.Stop()
 	}
-	return nil
+	return fmt.Errorf("vm cannot be stopped in state %v", h.m.State())
 }
 
 // Result reports how the run ended.

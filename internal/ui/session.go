@@ -30,6 +30,9 @@ type Info struct {
 	CPUs     uint
 	MemoryMB uint64
 	Kernel   string
+	// Mouse enables mouse reporting so the wheel scrolls the VM's history.
+	// Off by default because it also takes over text selection in the terminal.
+	Mouse bool
 }
 
 // Session owns the terminal while the VM runs.
@@ -202,7 +205,10 @@ func (s *Session) ConsoleSize() (cols, rows int) { return s.consoleW, s.rows }
 
 // Start takes over the terminal and begins rendering.
 func (s *Session) Start() {
-	fmt.Fprint(s.out, "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H"+mouseOn)
+	fmt.Fprint(s.out, "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H")
+	if s.info.Mouse {
+		fmt.Fprint(s.out, mouseOn)
+	}
 	s.event("vm starting")
 	go s.loop()
 }
@@ -474,7 +480,11 @@ func (s *Session) panelLines() []string {
 		sep,
 		kv("exit", "power off"),
 		kv("C-] ×2", "force off"),
-		kv("wheel", "scroll history"),
+	)
+	if s.info.Mouse {
+		lines = append(lines, kv("wheel", "scroll history"))
+	}
+	lines = append(lines,
 		sep,
 		" "+sDim.Render("activity"),
 	)

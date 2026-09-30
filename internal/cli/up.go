@@ -33,6 +33,7 @@ func newUpCmd() *cobra.Command {
 		plain   bool
 		verbose bool
 		devNAT  bool
+		mouse   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "up",
@@ -176,6 +177,7 @@ off from the host.`,
 			var sess *ui.Session
 			if useUI {
 				sess = ui.New(ui.Info{
+					Mouse:    mouse,
 					Network:  cfg.Network.Mode,
 					Allow:    len(cfg.Network.Allow),
 					Project:  cfg.Name,
@@ -245,6 +247,7 @@ off from the host.`,
 	cmd.Flags().StringVar(&repo, "repo", ".", "repo directory to mount inside the VM")
 	cmd.Flags().BoolVar(&plain, "plain", false, "no full-screen UI; raw console in the current terminal")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print the boot summary and run summary")
+	cmd.Flags().BoolVar(&mouse, "mouse", false, "capture the mouse so the wheel scrolls VM history (disables text selection; hold Fn or Option to select)")
 	cmd.Flags().BoolVar(&devNAT, "dev-nat", false, "DEVELOPMENT ONLY: attach a NAT network device")
 	_ = cmd.Flags().MarkHidden("dev-nat")
 	return cmd
