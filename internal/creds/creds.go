@@ -7,11 +7,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
 
-const service = "llok"
+// service is the Keychain service name. Tests and development set
+// LLOK_KEYCHAIN_SERVICE so they never touch the user's real credential.
+var service = func() string {
+	if s := os.Getenv("LLOK_KEYCHAIN_SERVICE"); s != "" {
+		return s
+	}
+	return "llok"
+}()
 
 // Credential is what the broker injects.
 type Credential struct {
