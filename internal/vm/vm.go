@@ -30,6 +30,7 @@ type Options struct {
 	HideBanner   bool               // suppress the in-guest banner (the host UI shows it instead)
 	Broker       bool               // tell the guest to start the vsock forwarder and use the broker
 	CredKind     string             // "apikey" or "oauth": which placeholder env var the guest sets
+	ShareDir     string             // host dir exposed read-only at /run/llok (CA cert etc.)
 	VsockPort    uint32             // host vsock port to serve (0 = none)
 	VsockServe   func(net.Listener) // runs the broker on the vsock listener
 	Disk         string             // optional root disk image, attached as /dev/vda
@@ -156,7 +157,24 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		return res, err
 	}
 	fs.SetDirectoryShare(single)
-	cfg.SetDirectorySharingDevicesVirtualMachineConfiguration([]vz.DirectorySharingDeviceConfiguration{fs})
+	shares := []vz.DirectorySharingDeviceConfiguration{fs}
+	if o.ShareDir != "" {
+		sd, err := vz.NewSharedDirectory(o.ShareDir, true)
+		if err != nil {
+			return res, err
+		}
+		ss, err := vz.NewSingleDirectoryShare(sd)
+		if err != nil {
+			return res, err
+		}
+		lfs, err := vz.NewVirtioFileSystemDeviceConfiguration("llok")
+		if err != nil {
+			return res, err
+		}
+		lfs.SetDirectoryShare(ss)
+		shares = append(shares, lfs)
+	}
+	cfg.SetDirectorySharingDevicesVirtualMachineConfiguration(shares)
 
 	// vsock is the future broker channel.
 	vsock, err := vz.NewVirtioSocketDeviceConfiguration()

@@ -83,6 +83,7 @@ off from the host.`,
 
 			// The broker: only way out of the VM. Needs a stored credential.
 			var brk *broker.Broker
+			var shareDir string
 			if cfg.Network.Mode == "broker" {
 				cred, err := creds.Get("anthropic")
 				if err != nil {
@@ -97,6 +98,20 @@ off from the host.`,
 					return err
 				}
 				defer brk.Close()
+				// The guest trusts llok's CA so TLS to Anthropic's hosts can be
+				// terminated here for credential injection.
+				ca, err := broker.LoadOrCreateCA(filepath.Join(home, "ca"))
+				if err != nil {
+					return fmt.Errorf("broker CA: %w", err)
+				}
+				brk.CA = ca
+				shareDir = filepath.Join(home, "share")
+				if err := os.MkdirAll(shareDir, 0o755); err != nil {
+					return err
+				}
+				if err := os.WriteFile(filepath.Join(shareDir, "ca.pem"), ca.PEM, 0o644); err != nil {
+					return err
+				}
 			}
 
 			opts := vm.Options{
@@ -118,6 +133,7 @@ off from the host.`,
 				opts.RootDisk = true
 			}
 			if brk != nil {
+				opts.ShareDir = shareDir
 				opts.Broker = true
 				opts.CredKind = brk.Cred.Kind
 				opts.VsockPort = 3128

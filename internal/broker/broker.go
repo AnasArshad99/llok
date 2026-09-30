@@ -13,6 +13,7 @@ package broker
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -76,15 +77,36 @@ type Broker struct {
 	Cred     Credential
 	Upstream *url.URL // provider API base, default https://api.anthropic.com
 	OnEvent  func(Event)
+	CA       *CA // when set, TLS to provider hosts is intercepted for injection
 
 	audit   *os.File
 	auditMu sync.Mutex
+	tr      *http.Transport
 	api     *httputil.ReverseProxy
 	fwd     *httputil.ReverseProxy
 	srv     *http.Server
+
+	hostMu sync.Mutex
+	hostPx map[string]*httputil.ReverseProxy
 }
 
 const anthropicHost = "api.anthropic.com"
+
+// Placeholders are what the guest holds instead of a real credential. The
+// guest init sets them; the broker swaps them on the way out.
+const (
+	PlaceholderAPIKey = "sk-ant-llok-placeholder"
+	PlaceholderOAuth  = "llok-placeholder-token"
+)
+
+// providerHosts are Anthropic's own endpoints. TLS to them is terminated by
+// the broker (with the guest-trusted llok CA) so the credential can be
+// injected; everything the agent sends there is the provider's business.
+var providerHosts = map[string]bool{
+	"api.anthropic.com":     true,
+	"platform.claude.com":   true,
+	"console.anthropic.com": true,
+}
 
 // New builds a broker writing its audit log to auditPath (append).
 func New(project string, pol Policy, cred Credential, auditPath string) (*Broker, error) {
@@ -103,20 +125,14 @@ func New(project string, pol Policy, cred Credential, auditPath string) (*Broker
 		ResponseHeaderTimeout: 5 * time.Minute, // long model responses
 		IdleConnTimeout:       90 * time.Second,
 	}
+	b.tr = tr
+	b.hostPx = map[string]*httputil.ReverseProxy{}
 	b.api = &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(b.Upstream)
 			pr.Out.Host = b.Upstream.Host
 			pr.Out.Header.Del("X-Forwarded-For")
-			// Swap the guest's placeholder for the real credential.
-			pr.Out.Header.Del("X-Api-Key")
-			pr.Out.Header.Del("Authorization")
-			switch b.Cred.Kind {
-			case "oauth":
-				pr.Out.Header.Set("Authorization", "Bearer "+b.Cred.Secret)
-			default:
-				pr.Out.Header.Set("X-Api-Key", b.Cred.Secret)
-			}
+			b.inject(pr.Out.Header, true)
 		},
 		Transport:     tr,
 		FlushInterval: -1, // stream SSE tokens as they arrive
@@ -158,13 +174,38 @@ func (b *Broker) Close() {
 	}
 }
 
-func (b *Broker) allowed(host string) bool {
-	h := host
-	if hp, _, err := net.SplitHostPort(host); err == nil {
-		h = hp
+// inject swaps the guest's placeholder credential for the real one. With
+// force it always sets the credential (the agent's own API base URL route);
+// otherwise only requests that carry a placeholder are touched. Returns
+// whether anything was injected.
+func (b *Broker) inject(h http.Header, force bool) bool {
+	auth := h.Get("Authorization")
+	key := h.Get("X-Api-Key")
+	hasPlaceholder := key == PlaceholderAPIKey || auth == "Bearer "+PlaceholderOAuth
+	if !force && !hasPlaceholder {
+		return false
 	}
-	h = strings.ToLower(h)
-	if h == anthropicHost {
+	h.Del("X-Api-Key")
+	h.Del("Authorization")
+	switch b.Cred.Kind {
+	case "oauth":
+		h.Set("Authorization", "Bearer "+b.Cred.Secret)
+	default:
+		h.Set("X-Api-Key", b.Cred.Secret)
+	}
+	return true
+}
+
+func hostOnly(host string) string {
+	if hp, _, err := net.SplitHostPort(host); err == nil {
+		return strings.ToLower(hp)
+	}
+	return strings.ToLower(host)
+}
+
+func (b *Broker) allowed(host string) bool {
+	h := hostOnly(host)
+	if providerHosts[h] {
 		return true
 	}
 	for _, a := range b.Policy.Allow {
@@ -192,6 +233,15 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ev.Decision = "deny"
 			b.deny(w, r.Host)
 			b.emit(ev, start)
+			return
+		}
+		if b.CA != nil && providerHosts[hostOnly(r.Host)] {
+			// Provider host: terminate TLS and inject; events per request.
+			ev.Kind, ev.Decision = "intercept", "allow"
+			ev.Error = b.intercept(w, r)
+			if ev.Error != "" {
+				b.emit(ev, start)
+			}
 			return
 		}
 		ev.Decision = "allow"
@@ -300,3 +350,116 @@ func (s *statusRecorder) Flush() {
 		f.Flush()
 	}
 }
+
+// intercept answers a CONNECT to a provider host by terminating TLS with a
+// llok-CA certificate for that host, serving HTTP on the decrypted stream,
+// and reverse-proxying each request to the real host with the credential
+// injected. The guest's TLS client sees a certificate chained to the llok CA.
+func (b *Broker) intercept(w http.ResponseWriter, r *http.Request) string {
+	host := hostOnly(r.Host)
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "llok broker: cannot hijack", http.StatusInternalServerError)
+		return "hijack unsupported"
+	}
+	conn, _, err := hj.Hijack()
+	if err != nil {
+		return err.Error()
+	}
+	io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
+
+	tlsConn := tls.Server(conn, &tls.Config{
+		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			name := host
+			if hello.ServerName != "" {
+				name = strings.ToLower(hello.ServerName)
+			}
+			return b.CA.Leaf(name)
+		},
+		NextProtos: []string{"http/1.1"},
+		MinVersion: tls.VersionTLS12,
+	})
+	if err := tlsConn.Handshake(); err != nil {
+		conn.Close()
+		return "tls: " + err.Error()
+	}
+
+	px := b.providerProxy(host)
+	done := make(chan struct{})
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			start := time.Now()
+			rec := &statusRecorder{ResponseWriter: w}
+			px.ServeHTTP(rec, req)
+			b.emit(Event{Time: start, Project: b.Project, Kind: "api", Method: req.Method,
+				Host: host, Path: req.URL.Path, Decision: "allow", Status: rec.status}, start)
+		}),
+		ConnState: func(_ net.Conn, st http.ConnState) {
+			if st == http.StateClosed {
+				select {
+				case done <- struct{}{}:
+				default:
+				}
+			}
+		},
+	}
+	go srv.Serve(&oneConnListener{c: tlsConn, addr: conn.LocalAddr()})
+	<-done
+	srv.Close()
+	return ""
+}
+
+// providerProxy returns a reverse proxy to https://host that injects the
+// credential into requests carrying a placeholder.
+func (b *Broker) providerProxy(host string) *httputil.ReverseProxy {
+	b.hostMu.Lock()
+	defer b.hostMu.Unlock()
+	if px, ok := b.hostPx[host]; ok {
+		return px
+	}
+	up := &url.URL{Scheme: "https", Host: host}
+	px := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(up)
+			pr.Out.Host = host
+			pr.Out.Header.Del("X-Forwarded-For")
+			b.inject(pr.Out.Header, false)
+		},
+		Transport:     b.tr,
+		FlushInterval: -1,
+		ErrorHandler:  b.proxyError,
+	}
+	b.hostPx[host] = px
+	return px
+}
+
+// oneConnListener hands a single already-open connection to http.Server.
+type oneConnListener struct {
+	c    net.Conn
+	addr net.Addr
+	once sync.Once
+	done chan struct{}
+}
+
+func (l *oneConnListener) Accept() (net.Conn, error) {
+	var c net.Conn
+	first := false
+	l.once.Do(func() { c, first = l.c, true; l.done = make(chan struct{}) })
+	if first {
+		return c, nil
+	}
+	<-l.done
+	return nil, net.ErrClosed
+}
+
+func (l *oneConnListener) Close() error {
+	l.once.Do(func() { l.done = make(chan struct{}) })
+	select {
+	case <-l.done:
+	default:
+		close(l.done)
+	}
+	return nil
+}
+
+func (l *oneConnListener) Addr() net.Addr { return l.addr }

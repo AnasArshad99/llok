@@ -30,6 +30,12 @@ if [ "$STAGE" = 1 ]; then
   fi
 fi
 
+if [ "$STAGE" = 1 ]; then
+  # llok's own read-only share (CA certificate for the broker), if attached.
+  mkdir -p /run/llok
+  mount -t virtiofs llok /run/llok 2>/dev/null || rmdir /run/llok
+fi
+
 MODE=$(cmdline_val llok.mode); MODE=${MODE:-run}
 REPO=$(cmdline_val llok.repo); REPO=${REPO:-/repo}
 NAME=$(b64_val llok.name); NAME=${NAME:-project}
@@ -97,6 +103,12 @@ export CLAUDE_CODE_OAUTH_TOKEN=llok-placeholder-token" ;;
 export ANTHROPIC_API_KEY=sk-ant-llok-placeholder" ;;
   esac
   NET_DESC="broker"
+  # Trust the llok CA so the broker can terminate TLS for provider hosts.
+  if [ -f /run/llok/ca.pem ]; then
+    [ -f /etc/ssl/certs/ca-certificates.crt ] && cat /run/llok/ca.pem >> /etc/ssl/certs/ca-certificates.crt
+    BROKER_ENV="$BROKER_ENV
+export NODE_EXTRA_CA_CERTS=/run/llok/ca.pem SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+  fi
 else
   NET_DESC="none"
 fi
