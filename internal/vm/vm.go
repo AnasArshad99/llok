@@ -32,6 +32,7 @@ type Options struct {
 	CredKind     string                        // "apikey" or "oauth": which placeholder env var the guest sets
 	ShareDir     string                        // host dir exposed read-only at /run/llok (CA cert etc.)
 	Vsock        map[uint32]func(net.Listener) // host vsock services (broker, control)
+	OnStart      func(Machine)                 // called once the VM is running
 	GracefulStop func() bool                   // asks the guest to power off; true if sent
 	Disk         string                        // optional root disk image, attached as /dev/vda
 	DiskReadOnly bool
@@ -45,6 +46,36 @@ type Options struct {
 	Cols     int       // terminal size reported to the guest (0 = detect)
 	Rows     int
 	OnMarker func(string) // called for each out-of-band guest marker
+}
+
+// Machine lets a supervisor pause, resume or stop the running VM.
+type Machine interface {
+	Pause() error
+	Resume() error
+	Stop() error
+}
+
+type machineHandle struct{ m *vz.VirtualMachine }
+
+func (h machineHandle) Pause() error {
+	if h.m.CanPause() {
+		return h.m.Pause()
+	}
+	return nil
+}
+
+func (h machineHandle) Resume() error {
+	if h.m.CanResume() {
+		return h.m.Resume()
+	}
+	return nil
+}
+
+func (h machineHandle) Stop() error {
+	if h.m.CanStop() {
+		return h.m.Stop()
+	}
+	return nil
 }
 
 // Result reports how the run ended.
@@ -306,6 +337,10 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	if err := machine.Start(); err != nil {
 		outW.Close()
 		return res, fmt.Errorf("start vm: %w", err)
+	}
+
+	if o.OnStart != nil {
+		o.OnStart(machineHandle{machine})
 	}
 
 	// Host services on vsock (broker, control channel).

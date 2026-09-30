@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/AnasArshad99/llok/internal/guard"
 )
 
 // FileName is the policy file looked up in the repo root.
@@ -29,6 +31,13 @@ type Config struct {
 		Mode  string   `yaml:"mode"`
 		Allow []string `yaml:"allow"`
 	} `yaml:"network"`
+	// Rules override or extend the built-in supervisor rules (see guard.Defaults).
+	Rules []guard.Rule `yaml:"rules"`
+}
+
+// GuardRules returns the effective supervisor rule set.
+func (c *Config) GuardRules() []guard.Rule {
+	return guard.Merge(guard.Defaults(), c.Rules)
 }
 
 // Default returns the built-in defaults.
@@ -66,6 +75,19 @@ mount:
 network:
   mode: %s
   allow: []
+
+# Supervisor rules run on your Mac over what it can see: files the agent
+# changed in the repo and hosts the broker was asked for. Built-in defaults:
+#   git-hooks    pause the VM when .git/hooks/* is written
+#   ci-config    notify when .github/workflows/* changes
+#   mass-delete  pause the VM when 50+ files are deleted within 10s
+# Override by name, disable with action: off, or add your own:
+#   - name: lockfile
+#     on: file
+#     path: package-lock.json
+#     action: notify
+#     message: lockfile changed
+rules: []
 `, c.Version, c.Name, c.Agent, c.VM.CPUs, c.VM.MemoryMB, c.Mount.Repo, c.Network.Mode))
 }
 
@@ -89,6 +111,9 @@ func Load(dir string) (*Config, error) {
 	}
 	if c.Network.Mode != "none" && c.Network.Mode != "broker" {
 		return nil, fmt.Errorf("%s: network.mode must be \"broker\" or \"none\"", FileName)
+	}
+	if err := guard.Validate(c.GuardRules()); err != nil {
+		return nil, fmt.Errorf("%s: rules: %w", FileName, err)
 	}
 	return c, nil
 }

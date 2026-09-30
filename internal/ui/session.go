@@ -58,6 +58,74 @@ type Session struct {
 
 	// OnResize is called (outside the lock) when the console pane changes size.
 	OnResize func(cols, rows int)
+
+	promptMu sync.Mutex // serialises prompts
+	prompt   *prompt
+}
+
+// Option is one answer a prompt offers.
+type Option struct {
+	Key   byte
+	Label string
+}
+
+type prompt struct {
+	question string
+	opts     []Option
+	answer   chan byte
+}
+
+// Ask shows a question in the panel, rings the bell, and blocks until one
+// of the option keys is pressed. Keys are not forwarded to the guest while
+// a prompt is showing.
+func (s *Session) Ask(question string, opts []Option) byte {
+	s.promptMu.Lock()
+	defer s.promptMu.Unlock()
+	p := &prompt{question: question, opts: opts, answer: make(chan byte, 1)}
+	s.mu.Lock()
+	s.prompt = p
+	s.dirty = true
+	s.mu.Unlock()
+	s.out.WriteString("\a")
+	k := <-p.answer
+	s.mu.Lock()
+	s.prompt = nil
+	s.dirty = true
+	s.mu.Unlock()
+	return k
+}
+
+// promptKey feeds a keypress to the active prompt. It reports whether the
+// key was consumed (any key is swallowed while a prompt is up).
+func (s *Session) promptKey(b byte) bool {
+	s.mu.Lock()
+	p := s.prompt
+	s.mu.Unlock()
+	if p == nil {
+		return false
+	}
+	for _, o := range p.opts {
+		if o.Key == b {
+			select {
+			case p.answer <- o.Key:
+			default:
+			}
+			return true
+		}
+	}
+	return true
+}
+
+// SetPaused reflects the VM's paused state in the panel.
+func (s *Session) SetPaused(v bool) {
+	s.mu.Lock()
+	if v {
+		s.state = "paused"
+	} else if s.state == "paused" {
+		s.state = "running"
+	}
+	s.dirty = true
+	s.mu.Unlock()
 }
 
 const (
@@ -363,6 +431,8 @@ func (s *Session) panelLines() []string {
 		dot, word = sWarn.Render("●"), sWarn.Render("booting")
 	case "running":
 		dot, word = sOK.Render("●"), sOK.Render("running")
+	case "paused":
+		dot, word = sWarn.Render("●"), sWarn.Render("paused")
 	default:
 		dot, word = sErr.Render("●"), sErr.Render("stopped")
 	}
@@ -386,6 +456,11 @@ func (s *Session) panelLines() []string {
 	lines = append(lines,
 		"",
 		" "+dot+" "+word,
+	)
+	if s.prompt != nil {
+		lines = append(lines, s.promptLines()...)
+	}
+	lines = append(lines,
 		sep,
 		kv("project", s.info.Project),
 		kv("repo", shortPath(s.info.RepoHost, s.panelW-11)),
@@ -425,6 +500,41 @@ func (s *Session) networkDesc() string {
 		d += sDim.Render(fmt.Sprintf(" +%d", s.info.Allow))
 	}
 	return d
+}
+
+// promptLines renders the active question as a highlighted block.
+func (s *Session) promptLines() []string {
+	w := s.panelW - 2
+	box := lipgloss.NewStyle().Foreground(lipgloss.Color("#1e2030")).Background(colWarn).Width(w)
+	var out []string
+	for _, l := range wrap(s.prompt.question, w-2) {
+		out = append(out, " "+box.Render(" "+l))
+	}
+	var keys []string
+	for _, o := range s.prompt.opts {
+		keys = append(keys, fmt.Sprintf("[%c] %s", o.Key, o.Label))
+	}
+	out = append(out, " "+box.Render(" "+strings.Join(keys, "  ")))
+	return out
+}
+
+func wrap(s string, w int) []string {
+	var lines []string
+	for _, para := range strings.Split(s, "\n") {
+		line := ""
+		for _, word := range strings.Fields(para) {
+			if line != "" && ansi.StringWidth(line)+1+ansi.StringWidth(word) > w {
+				lines = append(lines, line)
+				line = ""
+			}
+			if line != "" {
+				line += " "
+			}
+			line += word
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func fmtDur(d time.Duration) string {

@@ -101,6 +101,41 @@ network:
 
 Every request is appended to `~/.llok/audit/broker.jsonl`.
 
+## Supervisor
+
+A small rules engine runs on your Mac, outside the VM, over what the Mac can
+see for itself: which files in the repo the agent changed, and which hosts
+the broker was asked for. It never reads request contents and never records
+what runs inside the guest. Three rules ship by default:
+
+| Rule | When | Action |
+|---|---|---|
+| `git-hooks` | a file under `.git/hooks/` is written | pause the VM and ask |
+| `ci-config` | a file under `.github/workflows/` changes | notify |
+| `mass-delete` | 50 or more files deleted within 10 seconds | pause the VM and ask |
+
+A pause freezes the VM in place. The panel asks `[r] resume  [K] kill`, and
+nothing you type reaches the guest until you answer. In command mode, with
+no one to ask, a pause stops the VM instead.
+
+Rules live in `llok.yaml`. Override a default by name, disable one with
+`action: off`, or add your own:
+
+```yaml
+rules:
+  - name: mass-delete
+    action: off
+  - name: lockfile
+    on: file
+    path: package-lock.json
+    action: notify
+    message: lockfile changed
+```
+
+Matching is indexed, so the cost per event does not grow with the number of
+rules. Every event and every rule outcome is written to a per-session ledger
+under `~/.llok/sessions/<project>/`.
+
 ## How it works
 
 - **Hypervisor.** Apple's Virtualization framework, driven from Go. Boot to a ready shell takes about 0.2 seconds.
@@ -108,10 +143,11 @@ Every request is appended to `~/.llok/audit/broker.jsonl`.
 - **Image build.** `llok guest build` boots a one-off builder VM with NAT to install packages. It is the only VM that ever gets a network device, and it never sees a repo.
 - **Broker.** A small agent inside the guest forwards `127.0.0.1:3128` over vsock to llok on the host. Provider API calls are reverse-proxied with the real credential; TLS to the provider's hosts is terminated with a local CA the guest trusts, so injection works there too. Other allowed hosts get a plain tunnel with nothing injected.
 - **Control channel.** A second vsock port carries resize and shutdown, so window changes reach the agent's UI and Ctrl-] powers the guest off cleanly.
+- **Supervisor.** A file watcher on the repo (macOS FSEvents) and the broker's decisions feed an indexed rules engine on the host, which can pause or stop the VM through the Virtualization framework.
 
 ## Status
 
-Working today: locked VM, full-screen session, root image with Claude Code, broker with credential injection and audit, graceful shutdown and resize.
+Working today: locked VM, full-screen session, root image with Claude Code, broker with credential injection and audit, graceful shutdown and resize, supervisor rules with pause prompts and a session ledger.
 
 Planned: agent picker with Codex and opencode, approval prompts for risky actions, results returned as a branch, snapshot warm starts, a Linux backend on Firecracker.
 

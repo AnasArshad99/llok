@@ -48,6 +48,13 @@ func (f *inputFilter) Read(p []byte) (int, error) {
 
 func (f *inputFilter) filter(data []byte) []byte {
 	var out []byte
+	// While a prompt is up, every key goes to it and nothing reaches the guest.
+	if f.s.prompt != nil {
+		for _, b := range data {
+			f.s.promptKey(b)
+		}
+		return nil
+	}
 	for len(data) > 0 {
 		i := bytes.Index(data, sgrPrefix)
 		if i < 0 {

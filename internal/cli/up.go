@@ -17,9 +17,11 @@ import (
 	"github.com/AnasArshad99/llok/internal/config"
 	"github.com/AnasArshad99/llok/internal/control"
 	"github.com/AnasArshad99/llok/internal/creds"
+	"github.com/AnasArshad99/llok/internal/guard"
 	"github.com/AnasArshad99/llok/internal/guest"
 	"github.com/AnasArshad99/llok/internal/ui"
 	"github.com/AnasArshad99/llok/internal/vm"
+	"github.com/AnasArshad99/llok/internal/watch"
 )
 
 func newUpCmd() *cobra.Command {
@@ -133,6 +135,32 @@ off from the host.`,
 				opts.DiskReadOnly = true
 				opts.RootDisk = true
 			}
+			// Supervisor: host-side rules over repo file changes and broker
+			// decisions, with a session ledger. Metadata only.
+			home, _ := guest.Home()
+			ledger, err := guard.OpenLedger(filepath.Join(home, "sessions"), cfg.Name)
+			if err != nil {
+				return err
+			}
+			defer ledger.Close()
+			eng := guard.New(cfg.GuardRules())
+			eng.Ledger = ledger
+			var machine vm.Machine
+			eng.Machine = func() guard.Machine { return machine }
+			opts.OnStart = func(m vm.Machine) { machine = m }
+			stopWatch, err := watch.Start(absRepo, func(p, op string) {
+				eng.Observe(guard.Event{Kind: guard.KindFile, Path: p, Op: op})
+			})
+			if err != nil {
+				return fmt.Errorf("watch repo: %w", err)
+			}
+			defer stopWatch()
+			if brk != nil {
+				brk.OnEvent = func(e broker.Event) {
+					eng.Observe(guard.Event{Kind: guard.KindNet, Host: e.Host, Decision: e.Decision})
+				}
+			}
+
 			ctl := control.New()
 			opts.Vsock = map[uint32]func(net.Listener){
 				control.Port: ctl.Serve,
@@ -163,8 +191,22 @@ off from the host.`,
 				opts.Replies = sess.Replies()
 				opts.OnMarker = sess.Marker
 				sess.OnResize = func(cols, rows int) { ctl.Resize(cols, rows) }
+				eng.Notify = sess.Event
+				eng.Ask = func(q string, opts []guard.Option) byte {
+					uo := make([]ui.Option, len(opts))
+					for i, o := range opts {
+						uo[i] = ui.Option{Key: o.Key, Label: o.Label}
+					}
+					sess.SetPaused(true)
+					k := sess.Ask(q, uo)
+					sess.SetPaused(false)
+					return k
+				}
 				if brk != nil {
-					brk.OnEvent = func(e broker.Event) { sess.Event(e.Line()) }
+					brk.OnEvent = func(e broker.Event) {
+						sess.Event(e.Line())
+						eng.Observe(guard.Event{Kind: guard.KindNet, Host: e.Host, Decision: e.Decision})
+					}
 				}
 				sess.Start()
 			} else {
