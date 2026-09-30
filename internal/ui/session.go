@@ -55,6 +55,9 @@ type Session struct {
 
 	stop chan struct{}
 	done chan struct{}
+
+	// OnResize is called (outside the lock) when the console pane changes size.
+	OnResize func(cols, rows int)
 }
 
 const (
@@ -298,6 +301,9 @@ func (s *Session) render(force bool) {
 		s.emu.Resize(s.consoleW, s.rows)
 		s.out.WriteString("\x1b[2J")
 		force = true
+		if s.OnResize != nil {
+			go s.OnResize(s.consoleW, s.rows)
+		}
 	}
 	if !force && !s.dirty {
 		return

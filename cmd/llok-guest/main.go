@@ -1,6 +1,9 @@
-// llok-guest runs inside the VM. It has one job today: expose the host
-// broker on 127.0.0.1:3128 by forwarding each TCP connection over vsock.
-// The guest still has no network device; this port is the only way out.
+//go:build linux
+
+// llok-guest runs inside the VM. "proxy" exposes the host broker on
+// 127.0.0.1:3128 by forwarding each TCP connection over vsock (the guest has
+// no network device; this port is its only way out). "control" keeps a
+// connection to the host for resize and shutdown commands.
 package main
 
 import (
@@ -15,8 +18,16 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 || os.Args[1] != "proxy" {
-		fmt.Fprintln(os.Stderr, "usage: llok-guest proxy [-listen addr] [-port vsock-port]")
+	if len(os.Args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: llok-guest proxy|control [flags]")
+		os.Exit(2)
+	}
+	if os.Args[1] == "control" {
+		controlLoop(os.Args[2:])
+		return
+	}
+	if os.Args[1] != "proxy" {
+		fmt.Fprintln(os.Stderr, "usage: llok-guest proxy|control [flags]")
 		os.Exit(2)
 	}
 	fs := flag.NewFlagSet("proxy", flag.ExitOnError)

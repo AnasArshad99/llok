@@ -15,6 +15,7 @@ import (
 
 	"github.com/AnasArshad99/llok/internal/broker"
 	"github.com/AnasArshad99/llok/internal/config"
+	"github.com/AnasArshad99/llok/internal/control"
 	"github.com/AnasArshad99/llok/internal/creds"
 	"github.com/AnasArshad99/llok/internal/guest"
 	"github.com/AnasArshad99/llok/internal/ui"
@@ -76,7 +77,7 @@ off from the host.`,
 				}))
 			}
 
-			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP)
+			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
 			defer cancel()
 
 			rootfs, hasRootfs := guest.RootfsPath()
@@ -132,12 +133,16 @@ off from the host.`,
 				opts.DiskReadOnly = true
 				opts.RootDisk = true
 			}
+			ctl := control.New()
+			opts.Vsock = map[uint32]func(net.Listener){
+				control.Port: ctl.Serve,
+			}
+			opts.GracefulStop = func() bool { return ctl.Shutdown() == nil }
 			if brk != nil {
 				opts.ShareDir = shareDir
 				opts.Broker = true
 				opts.CredKind = brk.Cred.Kind
-				opts.VsockPort = 3128
-				opts.VsockServe = func(l net.Listener) { brk.Serve(l) }
+				opts.Vsock[3128] = func(l net.Listener) { brk.Serve(l) }
 			}
 
 			var sess *ui.Session
@@ -157,6 +162,7 @@ off from the host.`,
 				opts.Input = sess.Input(os.Stdin)
 				opts.Replies = sess.Replies()
 				opts.OnMarker = sess.Marker
+				sess.OnResize = func(cols, rows int) { ctl.Resize(cols, rows) }
 				if brk != nil {
 					brk.OnEvent = func(e broker.Event) { sess.Event(e.Line()) }
 				}
@@ -179,7 +185,7 @@ off from the host.`,
 			}
 			switch {
 			case res.Forced:
-				fmt.Fprintln(os.Stderr, styleWarn.Render("llok")+" · vm forced off after "+dur.String())
+				fmt.Fprintln(os.Stderr, styleTitle.Render("llok")+" · vm powered off on request after "+dur.String())
 			case res.ExitCode != 0:
 				fmt.Fprintln(os.Stderr, styleErr.Render("llok")+fmt.Sprintf(" · vm ran %s · exit %d", dur, res.ExitCode))
 				os.Exit(res.ExitCode)

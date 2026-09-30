@@ -27,13 +27,13 @@ type Options struct {
 	Command        string // shell snippet run in the repo; empty means interactive shell
 	Interactive    bool
 
-	HideBanner   bool               // suppress the in-guest banner (the host UI shows it instead)
-	Broker       bool               // tell the guest to start the vsock forwarder and use the broker
-	CredKind     string             // "apikey" or "oauth": which placeholder env var the guest sets
-	ShareDir     string             // host dir exposed read-only at /run/llok (CA cert etc.)
-	VsockPort    uint32             // host vsock port to serve (0 = none)
-	VsockServe   func(net.Listener) // runs the broker on the vsock listener
-	Disk         string             // optional root disk image, attached as /dev/vda
+	HideBanner   bool                          // suppress the in-guest banner (the host UI shows it instead)
+	Broker       bool                          // tell the guest to start the vsock forwarder and use the broker
+	CredKind     string                        // "apikey" or "oauth": which placeholder env var the guest sets
+	ShareDir     string                        // host dir exposed read-only at /run/llok (CA cert etc.)
+	Vsock        map[uint32]func(net.Listener) // host vsock services (broker, control)
+	GracefulStop func() bool                   // asks the guest to power off; true if sent
+	Disk         string                        // optional root disk image, attached as /dev/vda
 	DiskReadOnly bool
 	RootDisk     bool   // tell the guest to switch_root onto the disk
 	NAT          bool   // attach a NAT network device (builder VMs only!)
@@ -308,19 +308,21 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		return res, fmt.Errorf("start vm: %w", err)
 	}
 
-	// The broker listens on vsock; the guest forwards 127.0.0.1:3128 to it.
-	var vl net.Listener
-	if o.VsockPort != 0 && o.VsockServe != nil {
+	// Host services on vsock (broker, control channel).
+	var vls []net.Listener
+	if len(o.Vsock) > 0 {
 		devs := machine.SocketDevices()
 		if len(devs) == 0 {
 			return res, fmt.Errorf("no vsock device on the vm")
 		}
-		l, err := devs[0].Listen(o.VsockPort)
-		if err != nil {
-			return res, fmt.Errorf("vsock listen: %w", err)
+		for port, serve := range o.Vsock {
+			l, err := devs[0].Listen(port)
+			if err != nil {
+				return res, fmt.Errorf("vsock listen %d: %w", port, err)
+			}
+			vls = append(vls, l)
+			go serve(l)
 		}
-		vl = l
-		go o.VsockServe(l)
 	}
 
 	for running := true; running; {
@@ -342,8 +344,8 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			}
 		}
 	}
-	if vl != nil {
-		vl.Close()
+	for _, l := range vls {
+		l.Close()
 	}
 	// The VM helper process keeps its own dup of the pipe's write end, so
 	// closing ours never yields EOF. Close the read end to unblock the copy.

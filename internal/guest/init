@@ -93,6 +93,9 @@ t "repo mounted"
 hostname llok 2>/dev/null
 ip link set lo up 2>/dev/null
 
+# Control channel to the host (resize, graceful shutdown).
+command -v llok-guest >/dev/null 2>&1 && llok-guest control >/dev/null 2>&1 &
+
 # The broker: the guest's only way out. llok-guest forwards 127.0.0.1:3128
 # over vsock to the host, which decides what may leave and injects the real
 # credential. The guest only ever holds a placeholder.

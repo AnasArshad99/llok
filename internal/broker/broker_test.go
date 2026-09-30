@@ -1,0 +1,128 @@
+package broker
+
+import (
+	"net/http"
+	"testing"
+)
+
+func newTestBroker(t *testing.T, kind string, allow ...string) *Broker {
+	t.Helper()
+	b, err := New("test", Policy{Allow: allow}, Credential{Kind: kind, Secret: "REAL-SECRET"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestAllowed(t *testing.T) {
+	b := newTestBroker(t, "apikey", "registry.npmjs.org", "*.github.com")
+	cases := map[string]bool{
+		"api.anthropic.com:443":    true, // provider host, always
+		"platform.claude.com":      true,
+		"registry.npmjs.org:443":   true,
+		"REGISTRY.NPMJS.ORG":       true, // case-insensitive
+		"api.github.com:443":       true, // wildcard
+		"github.com":               true, // wildcard also matches the apex
+		"evil.github.com.attacker": false,
+		"www.google.com:443":       false,
+		"npmjs.org":                false, // no wildcard for this one
+		"registry.npmjs.org.evil":  false,
+	}
+	for host, want := range cases {
+		if got := b.allowed(host); got != want {
+			t.Errorf("allowed(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
+
+func TestInjectSwapsPlaceholderOnly(t *testing.T) {
+	b := newTestBroker(t, "oauth")
+
+	h := http.Header{}
+	h.Set("Authorization", "Bearer "+PlaceholderOAuth)
+	if !b.inject(h, false) {
+		t.Fatal("placeholder bearer should be injected")
+	}
+	if got := h.Get("Authorization"); got != "Bearer REAL-SECRET" {
+		t.Errorf("Authorization = %q", got)
+	}
+	if h.Get("X-Api-Key") != "" {
+		t.Error("x-api-key should be removed")
+	}
+
+	// A request without the placeholder is left alone on the intercept path.
+	h = http.Header{}
+	h.Set("Authorization", "Bearer someone-elses-token")
+	if b.inject(h, false) {
+		t.Error("foreign credential must not be replaced")
+	}
+	if h.Get("Authorization") != "Bearer someone-elses-token" {
+		t.Error("foreign credential must be untouched")
+	}
+
+	// The agent's own API base route always injects.
+	h = http.Header{}
+	if !b.inject(h, true) || h.Get("Authorization") != "Bearer REAL-SECRET" {
+		t.Error("forced inject should set the credential")
+	}
+}
+
+func TestInjectAPIKeyKind(t *testing.T) {
+	b := newTestBroker(t, "apikey")
+	h := http.Header{}
+	h.Set("X-Api-Key", PlaceholderAPIKey)
+	h.Set("Authorization", "Bearer "+PlaceholderOAuth) // both placeholders present
+	if !b.inject(h, false) {
+		t.Fatal("expected injection")
+	}
+	if h.Get("X-Api-Key") != "REAL-SECRET" || h.Get("Authorization") != "" {
+		t.Errorf("headers after inject: %v", h)
+	}
+}
+
+func TestEventLine(t *testing.T) {
+	cases := []struct {
+		ev   Event
+		want string
+	}{
+		{Event{Kind: "connect", Method: "CONNECT", Host: "x.com:443", Decision: "deny"}, "✗ CONNECT x.com:443 denied"},
+		{Event{Kind: "api", Method: "POST", Path: "/v1/messages", Decision: "allow", Status: 200}, "→ POST /v1/messages 200 0s"},
+		{Event{Kind: "connect", Host: "a.com:443", Decision: "allow"}, "↔ a.com:443 0s"},
+		{Event{Kind: "connect", Host: "a.com:443", Decision: "allow", Error: "dial timeout"}, "✗ a.com:443 dial timeout"},
+	}
+	for _, c := range cases {
+		if got := c.ev.Line(); got != c.want {
+			t.Errorf("Line() = %q, want %q", got, c.want)
+		}
+	}
+}
+
+func TestLeafCertificates(t *testing.T) {
+	dir := t.TempDir()
+	ca, err := LoadOrCreateCA(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c1, err := ca.Leaf("api.anthropic.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c1.Leaf.DNSNames[0] != "api.anthropic.com" {
+		t.Errorf("SAN = %v", c1.Leaf.DNSNames)
+	}
+	if err := c1.Leaf.CheckSignatureFrom(ca.cert); err != nil {
+		t.Errorf("leaf not signed by CA: %v", err)
+	}
+	c2, _ := ca.Leaf("api.anthropic.com")
+	if c1 != c2 {
+		t.Error("leaf should be cached per host")
+	}
+	// Reloading from disk yields the same CA.
+	ca2, err := LoadOrCreateCA(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ca2.cert.Equal(ca.cert) {
+		t.Error("CA should be persisted and reloaded")
+	}
+}

@@ -20,8 +20,8 @@ guest: build
 run: build
 	./$(BIN) up
 
-test:
-	go vet ./... && go test ./...
+test: guest-agent
+	go vet ./... && go test ./... -count=1
 
 clean:
 	rm -f $(BIN)
