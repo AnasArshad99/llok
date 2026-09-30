@@ -14,7 +14,7 @@ udhcpc -i eth0 -q -n -t 15 >/dev/null 2>&1 || { echo "llok build: dhcp failed" >
 log "address $(ip -4 -o addr show eth0 | awk '{print $4}') · dns $(awk '/nameserver/{print $2; exit}' /etc/resolv.conf)"
 
 log "formatting root disk"
-apk add --no-cache -q e2fsprogs
+apk add --no-cache -q --no-progress e2fsprogs
 mkfs.ext4 -q -F -L llok-root /dev/vda
 mkdir -p /mnt
 mount /dev/vda /mnt
@@ -23,7 +23,7 @@ log "installing alpine $BR base and toolchain (this downloads ~150 MB)"
 mkdir -p /mnt/etc/apk/keys /mnt/etc/llok
 cp /etc/apk/keys/* /mnt/etc/apk/keys/
 printf '%s/%s/main\n%s/%s/community\n' "$MIRROR" "$BR" "$MIRROR" "$BR" > /mnt/etc/apk/repositories
-apk -p /mnt --initdb -U --no-cache -q add \
+apk -p /mnt --initdb -U --no-cache -q --no-progress add \
   alpine-base bash coreutils findutils grep sed less procps \
   git curl wget ca-certificates openssh-client \
   ripgrep jq tar gzip unzip xz \
@@ -40,11 +40,13 @@ if ! chroot /mnt /bin/bash -lc 'curl -fsSL https://claude.ai/install.sh | bash' 
   chroot /mnt /bin/bash -lc 'npm install -g @anthropic-ai/claude-code' >/tmp/claude-install.log 2>&1 \
     || { tail -20 /tmp/claude-install.log; exit 3; }
 fi
-if [ -x /mnt/root/.local/bin/claude ] && [ ! -e /mnt/usr/local/bin/claude ]; then
-  mkdir -p /mnt/usr/local/bin
+# The native installer puts a symlink in /root/.local/bin (absolute target, so
+# it only resolves inside the chroot). Expose it on the default PATH.
+mkdir -p /mnt/usr/local/bin
+if [ -e /mnt/root/.local/bin/claude ]; then
   ln -sf /root/.local/bin/claude /mnt/usr/local/bin/claude
 fi
-CLAUDE_VER=$(chroot /mnt /bin/bash -lc 'claude --version' 2>/dev/null | head -1 | tr -d '\r')
+CLAUDE_VER=$(chroot /mnt /bin/bash -c 'PATH=/root/.local/bin:/usr/local/bin:$PATH claude --version' 2>&1 | head -1 | tr -d '\r')
 [ -n "$CLAUDE_VER" ] || { echo "llok build: claude not runnable after install" >&2; tail -20 /tmp/claude-install.log; exit 4; }
 log "claude code: $CLAUDE_VER"
 umount /mnt/dev /mnt/sys /mnt/proc

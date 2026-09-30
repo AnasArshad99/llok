@@ -23,8 +23,13 @@ Linux/Firecracker backend come next.
 ```bash
 git clone https://github.com/muhammadanas/llok && cd llok
 make install      # builds, signs, and installs llok into ~/.local/bin
-llok guest build  # downloads the Alpine kernel + rootfs into ~/.llok (once)
+llok guest build  # builds the guest image into ~/.llok (once, a few minutes)
 ```
+
+`llok guest build` downloads Alpine's kernel, assembles the initramfs, then
+boots a one-off builder VM that installs Alpine, git, Node, ripgrep and
+Claude Code onto a root disk. That builder is the only VM that ever gets a
+network device, and it never sees a repo.
 
 Set `PREFIX=/usr/local` to install system-wide. Homebrew tap and a one-line
 installer are planned once there are tagged releases.
@@ -53,10 +58,15 @@ in `llok.yaml`.
 
 - Host: Go + Apple's Virtualization framework via Code-Hex/vz.
 - Guest: Alpine's `linux-virt` kernel (unwrapped from its EFI zboot stub, since
-  the Virtualization framework only loads a raw arm64 Image) and an initramfs
-  built from Alpine's minirootfs with a tiny `/init`.
+  the Virtualization framework only loads a raw arm64 Image), an initramfs
+  built from Alpine's minirootfs with a tiny `/init`, and an ext4 root disk
+  with the toolchain and Claude Code.
+- Root disk: attached read-only, with a tmpfs overlay on top. Everything the
+  agent changes outside the repo disappears at power-off.
 - Repo sharing: virtiofs, read-write, mounted at `/repo`.
-- Network: no virtio-net device is attached, so the guest has only `lo`.
+- Network: no virtio-net device is attached to session VMs, so the guest has
+  only `lo`. Claude Code is installed but cannot reach the API until the
+  broker lands (next step).
 - vsock: attached now, used by the broker in a later step.
 
 ## License
