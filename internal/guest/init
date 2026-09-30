@@ -95,7 +95,8 @@ if [ "$BROKER" = 1 ] && command -v llok-guest >/dev/null 2>&1; then
   BROKER_ENV='export HTTP_PROXY=http://127.0.0.1:3128 HTTPS_PROXY=http://127.0.0.1:3128
 export http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY
 export NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost
-export ANTHROPIC_BASE_URL=http://127.0.0.1:3128'
+export ANTHROPIC_BASE_URL=http://127.0.0.1:3128
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1'
   case "$CRED" in
     oauth)  BROKER_ENV="$BROKER_ENV
 export CLAUDE_CODE_OAUTH_TOKEN=llok-placeholder-token" ;;
