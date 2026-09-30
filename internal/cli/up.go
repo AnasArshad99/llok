@@ -21,13 +21,15 @@ func newUpCmd() *cobra.Command {
 		cpus    uint
 		memMB   uint64
 		repo    string
+		quiet   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Boot a locked microVM with the repo mounted at /repo",
 		Long: `Boots a fresh microVM with no network device attached and the repo shared
 read-write at /repo. With --cmd the command runs inside /repo and the VM powers
-off when it exits. Without --cmd you get an interactive shell in the guest.`,
+off when it exits. Without --cmd you get an interactive shell in the guest.
+Press Ctrl-] twice to force the VM off from the host.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load(repo)
 			if err != nil {
@@ -48,6 +50,21 @@ off when it exits. Without --cmd you get an interactive shell in the guest.`,
 				return err
 			}
 
+			interactive := command == ""
+			if !quiet {
+				mode := "shell  " + styleDim.Render("(exit to power off · Ctrl-] twice to force)")
+				if !interactive {
+					mode = "run  " + styleDim.Render(command)
+				}
+				printBox("llok · booting locked VM", kv([][2]string{
+					{"project", cfg.Name},
+					{"repo", absRepo + "  →  /repo"},
+					{"vm", fmt.Sprintf("%d vCPU · %d MiB · Alpine linux-virt", cpus, memMB)},
+					{"network", "none"},
+					{"mode", mode},
+				}))
+			}
+
 			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP)
 			defer cancel()
 
@@ -55,17 +72,18 @@ off when it exits. Without --cmd you get an interactive shell in the guest.`,
 				Kernel:      kernel,
 				Initrd:      initrd,
 				Repo:        absRepo,
+				Name:        cfg.Name,
 				CPUs:        cpus,
 				MemoryMB:    memMB,
 				Command:     command,
-				Interactive: command == "",
+				Interactive: interactive,
 				Log:         os.Stderr,
 			})
 			if err != nil {
 				return err
 			}
 			if code != 0 {
-				fmt.Fprintf(os.Stderr, "llok: guest command exited with status %d\n", code)
+				fmt.Fprintln(os.Stderr, bad(fmt.Sprintf("guest command exited with status %d", code)))
 				os.Exit(code)
 			}
 			return nil
@@ -75,5 +93,6 @@ off when it exits. Without --cmd you get an interactive shell in the guest.`,
 	cmd.Flags().UintVar(&cpus, "cpus", 0, "vCPUs (default from llok.yaml)")
 	cmd.Flags().Uint64Var(&memMB, "mem", 0, "memory in MiB (default from llok.yaml)")
 	cmd.Flags().StringVar(&repo, "repo", ".", "repo directory to mount at /repo")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "no banner")
 	return cmd
 }

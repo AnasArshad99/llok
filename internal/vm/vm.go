@@ -20,6 +20,7 @@ import (
 type Options struct {
 	Kernel, Initrd string
 	Repo           string // host directory shared at /repo
+	Name           string // project name, shown in the guest prompt
 	CPUs           uint
 	MemoryMB       uint64
 	Command        string // shell snippet run in /repo; empty means interactive shell
@@ -28,6 +29,9 @@ type Options struct {
 }
 
 var exitRe = regexp.MustCompile(`LLOK_EXIT (\d+)`)
+
+// escapeKey is Ctrl-]; pressing it twice forces the VM off from the host.
+const escapeKey = 0x1d
 
 // Run boots the VM, waits for it to stop, and returns the guest command's exit code.
 func Run(ctx context.Context, o Options) (int, error) {
@@ -39,8 +43,17 @@ func Run(ctx context.Context, o Options) (int, error) {
 	}
 
 	cmdline := "console=hvc0 rdinit=/init panic=-1 quiet loglevel=3 llok.repo=/repo"
+	if o.Name != "" {
+		cmdline += " llok.name=" + base64.StdEncoding.EncodeToString([]byte(o.Name))
+	}
 	if o.Command != "" {
 		cmdline += " llok.cmd=" + base64.StdEncoding.EncodeToString([]byte(o.Command))
+	}
+	stdinFD := int(os.Stdin.Fd())
+	if term.IsTerminal(stdinFD) {
+		if cols, rows, err := term.GetSize(stdinFD); err == nil && cols > 0 && rows > 0 {
+			cmdline += fmt.Sprintf(" llok.cols=%d llok.rows=%d", cols, rows)
+		}
 	}
 
 	boot, err := vz.NewLinuxBootLoader(o.Kernel, vz.WithCommandLine(cmdline), vz.WithInitrd(o.Initrd))
@@ -57,25 +70,18 @@ func Run(ctx context.Context, o Options) (int, error) {
 	}
 	cfg.SetPlatformVirtualMachineConfiguration(platform)
 
-	// Console: guest hvc0 <-> our stdin / a pipe we tee to stdout so we can
-	// watch for the exit marker without buffering interactive output.
-	pr, pw, err := os.Pipe()
+	// Console: guest hvc0 <-> pipes on both sides. Input goes through a pipe
+	// so we can watch for the escape key; output goes through a pipe so we
+	// can tee it and spot the exit marker without buffering.
+	inR, inW, err := os.Pipe()
 	if err != nil {
 		return 0, err
 	}
-	defer pr.Close()
-	// VZ wants a real pipe or tty for the guest's input; /dev/null is refused.
-	stdin := os.Stdin
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		inR, inW, err := os.Pipe()
-		if err != nil {
-			return 0, err
-		}
-		defer inW.Close()
-		go func() { io.Copy(inW, os.Stdin); inW.Close() }()
-		stdin = inR
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		return 0, err
 	}
-	attach, err := vz.NewFileHandleSerialPortAttachment(stdin, pw)
+	attach, err := vz.NewFileHandleSerialPortAttachment(inR, outW)
 	if err != nil {
 		return 0, err
 	}
@@ -130,7 +136,7 @@ func Run(ctx context.Context, o Options) (int, error) {
 		defer close(copyDone)
 		buf := make([]byte, 4096)
 		for {
-			n, err := pr.Read(buf)
+			n, err := outR.Read(buf)
 			if n > 0 {
 				os.Stdout.Write(buf[:n])
 				tail.Write(buf[:n])
@@ -147,19 +153,50 @@ func Run(ctx context.Context, o Options) (int, error) {
 		}
 	}()
 
-	if o.Interactive && term.IsTerminal(int(os.Stdin.Fd())) {
-		old, err := term.MakeRaw(int(os.Stdin.Fd()))
+	// Forward stdin to the guest, watching for Ctrl-] Ctrl-].
+	forceStop := make(chan struct{}, 1)
+	go func() {
+		defer inW.Close()
+		buf := make([]byte, 1024)
+		prevEsc := false
+		for {
+			n, err := os.Stdin.Read(buf)
+			if n > 0 {
+				chunk := buf[:n]
+				for _, b := range chunk {
+					if b == escapeKey && prevEsc {
+						select {
+						case forceStop <- struct{}{}:
+						default:
+						}
+						return
+					}
+					prevEsc = b == escapeKey
+				}
+				if _, err := inW.Write(chunk); err != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	if o.Interactive && term.IsTerminal(stdinFD) {
+		old, err := term.MakeRaw(stdinFD)
 		if err == nil {
-			defer term.Restore(int(os.Stdin.Fd()), old)
+			defer term.Restore(stdinFD, old)
 		}
 	}
 
 	start := time.Now()
 	if err := machine.Start(); err != nil {
-		pw.Close()
+		outW.Close()
 		return 0, fmt.Errorf("start vm: %w", err)
 	}
 
+	forced := false
 	for running := true; running; {
 		select {
 		case st := <-machine.StateChangedNotify():
@@ -167,7 +204,15 @@ func Run(ctx context.Context, o Options) (int, error) {
 			case vz.VirtualMachineStateStopped, vz.VirtualMachineStateError:
 				running = false
 			}
+		case <-forceStop:
+			forced = true
+			fmt.Fprint(os.Stdout, "\r\n")
+			fmt.Fprintf(o.Log, "llok: forcing VM off (Ctrl-] twice)\r\n")
+			if machine.CanStop() {
+				_ = machine.Stop()
+			}
 		case <-ctx.Done():
+			forced = true
 			if machine.CanStop() {
 				_ = machine.Stop()
 			}
@@ -175,14 +220,17 @@ func Run(ctx context.Context, o Options) (int, error) {
 	}
 	// The VM helper process keeps its own dup of the pipe's write end, so
 	// closing ours never yields EOF. Close the read end to unblock the tee.
-	pw.Close()
-	pr.Close()
+	outW.Close()
+	outR.Close()
 	select {
 	case <-copyDone:
 	case <-time.After(time.Second):
 	}
 	fmt.Fprintf(o.Log, "\r\nllok: vm ran for %s\r\n", time.Since(start).Round(time.Millisecond))
 
+	if forced {
+		return 0, nil
+	}
 	if o.Command != "" && exitCode < 0 {
 		return 0, fmt.Errorf("guest stopped without reporting an exit status")
 	}

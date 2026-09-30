@@ -13,28 +13,11 @@ import (
 // FileName is the policy file looked up in the repo root.
 const FileName = "llok.yaml"
 
-// DefaultYAML is what `llok init` writes.
-const DefaultYAML = `# llok policy. Everything the agent can touch is declared here.
-version: 1
-
-vm:
-  cpus: 2
-  memory_mb: 1024
-
-# The repo is mounted read-write at this path inside the guest.
-mount:
-  repo: /repo
-
-# The guest has no network device. In a later step the only way out will be
-# the llok broker on the host, and this is where you allow destinations.
-network:
-  mode: none
-  allow: []
-`
-
 // Config is the parsed llok.yaml.
 type Config struct {
-	Version int `yaml:"version"`
+	Version int    `yaml:"version"`
+	Name    string `yaml:"name"`
+	Agent   string `yaml:"agent"`
 	VM      struct {
 		CPUs     uint   `yaml:"cpus"`
 		MemoryMB uint64 `yaml:"memory_mb"`
@@ -50,16 +33,44 @@ type Config struct {
 
 // Default returns the built-in defaults.
 func Default() *Config {
-	var c Config
-	if err := yaml.Unmarshal([]byte(DefaultYAML), &c); err != nil {
-		panic("default llok.yaml does not parse: " + err.Error())
-	}
-	return &c
+	c := &Config{Version: 1, Name: "project", Agent: "claude-code"}
+	c.VM.CPUs = 2
+	c.VM.MemoryMB = 1024
+	c.Mount.Repo = "/repo"
+	c.Network.Mode = "none"
+	return c
+}
+
+// Render writes the config as a commented llok.yaml.
+func (c *Config) Render() []byte {
+	return []byte(fmt.Sprintf(`# llok policy. Everything the agent can touch is declared here.
+version: %d
+name: %s
+
+# Which coding agent runs inside the VM (claude-code | shell).
+agent: %s
+
+vm:
+  cpus: %d
+  memory_mb: %d
+
+# The repo is mounted read-write at this path inside the guest.
+mount:
+  repo: %s
+
+# The guest has no network device. In a later step the only way out will be
+# the llok broker on the host, and this is where you allow destinations.
+network:
+  mode: %s
+  allow: []
+`, c.Version, c.Name, c.Agent, c.VM.CPUs, c.VM.MemoryMB, c.Mount.Repo, c.Network.Mode))
 }
 
 // Load reads llok.yaml from dir, falling back to defaults when absent.
 func Load(dir string) (*Config, error) {
 	c := Default()
+	abs, _ := filepath.Abs(dir)
+	c.Name = filepath.Base(abs)
 	data, err := os.ReadFile(filepath.Join(dir, FileName))
 	if errors.Is(err, os.ErrNotExist) {
 		return c, nil

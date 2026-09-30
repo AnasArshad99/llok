@@ -22,11 +22,16 @@ Linux/Firecracker backend come next.
 
 ```bash
 make guest        # builds ./llok and downloads the Alpine kernel + rootfs into ~/.llok
+llok doctor       # checks hypervisor support, code signing, guest image
 cd your-repo
-llok init         # writes llok.yaml
-llok up           # interactive shell in the VM, repo at /repo
+llok init         # interactive setup, writes llok.yaml (use --yes for defaults)
+llok up           # shell inside the VM, repo at /repo; `exit` powers off
 llok up -c 'ls /repo && ip link'   # run one command and power off
 ```
+
+Inside the VM you get a banner and a `llok@project /repo #` prompt so it is
+always obvious you are in the sandbox. Press Ctrl-] twice to force the VM off
+from the host if the guest is wedged.
 
 ## How it works
 
