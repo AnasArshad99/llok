@@ -18,10 +18,20 @@ Linux/Firecracker backend come next.
 - Go 1.26 or newer
 - Xcode command line tools (for `codesign`)
 
+## Install
+
+```bash
+git clone https://github.com/muhammadanas/llok && cd llok
+make install      # builds, signs, and installs llok into ~/.local/bin
+llok guest build  # downloads the Alpine kernel + rootfs into ~/.llok (once)
+```
+
+Set `PREFIX=/usr/local` to install system-wide. Homebrew tap and a one-line
+installer are planned once there are tagged releases.
+
 ## Quick start
 
 ```bash
-make guest        # builds ./llok and downloads the Alpine kernel + rootfs into ~/.llok
 llok doctor       # checks hypervisor support, code signing, guest image
 cd your-repo
 llok init         # interactive setup, writes llok.yaml (use --yes for defaults)
