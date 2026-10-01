@@ -300,34 +300,35 @@ func (e *Engine) pause(msg string) {
 	m := e.machine()
 	if e.Ask == nil {
 		e.notify("✗ vm stopped (no one to ask): " + msg)
-		if m != nil {
-			m.Stop()
-		}
+		e.do(m, "stop", Machine.Stop)
 		return
 	}
-	if m != nil {
-		m.Pause()
-	}
+	e.do(m, "pause", Machine.Pause)
 	e.notify("⏸ paused: " + msg)
 	// Kill needs a capital K so an accidental keypress cannot end the session.
 	k := e.Ask("VM paused: "+msg, []Option{{'r', "resume"}, {'K', "kill"}})
 	if k == 'K' {
 		e.notify("✗ vm killed by you")
-		if m != nil {
-			m.Stop()
-		}
+		e.do(m, "stop", Machine.Stop)
 		return
 	}
-	if m != nil {
-		m.Resume()
-	}
+	e.do(m, "resume", Machine.Resume)
 	e.notify("▶ resumed by you")
 }
 
 func (e *Engine) kill(msg string) {
 	e.notify("✗ vm stopped: " + msg)
-	if m := e.machine(); m != nil {
-		m.Stop()
+	e.do(e.machine(), "stop", Machine.Stop)
+}
+
+// do runs a machine operation and surfaces its failure in the panel.
+func (e *Engine) do(m Machine, what string, op func(Machine) error) {
+	if m == nil {
+		e.notify("! cannot " + what + ": vm handle not available")
+		return
+	}
+	if err := op(m); err != nil {
+		e.notify("! " + what + " failed: " + err.Error())
 	}
 }
 

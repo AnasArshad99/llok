@@ -66,7 +66,6 @@ llok up             # boots the VM and takes over the terminal; run `claude` ins
 | `llok up` | Interactive session. `exit` powers off, Ctrl-] twice forces it |
 | `llok up -c 'make test'` | Run one command in the VM, return its exit code |
 | `llok up --plain` | Raw console, no panel |
-| `llok up --mouse` | Wheel scrolls VM history (takes over text selection; hold Fn or Option to select) |
 | `llok auth claude` | Store your Claude login. `--api-key` stores a key instead |
 | `llok doctor` | Check hypervisor support, code signing, guest image |
 | `llok guest build` | Rebuild the VM image (for a newer agent version) |
