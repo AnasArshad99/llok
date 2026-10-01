@@ -97,9 +97,13 @@ network:
 | Reach any other host | only if listed under `network.allow` |
 | See your credentials | no. The VM holds a placeholder; the broker swaps it on the way out |
 | Change its own system | only until power-off. The root disk is read-only with a memory overlay |
+| Run as root inside | no. The session runs as an unprivileged user; llok's own guest agent keeps root |
 | Touch your Mac | no. No shared folders beyond the repo, no host network, no host devices |
+| Program your terminal | no. Output outside the UI is reduced to text and colours |
 
-Every request is appended to `~/.llok/audit/broker.jsonl`.
+Every request is appended to `~/.llok/audit/broker.jsonl`. The threat model,
+what llok does not protect against, and how to report a vulnerability are in
+[SECURITY.md](SECURITY.md).
 
 ## Supervisor
 

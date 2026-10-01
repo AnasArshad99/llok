@@ -29,6 +29,13 @@ KVER=$(tar -xOzf "$CACHE/APKINDEX.tar.gz" APKINDEX 2>/dev/null | awk '/^P:linux-
 log "alpine rootfs $ROOTFS_FILE, kernel linux-virt $KVER"
 
 fetch "$MIRROR/$ALPINE_BRANCH/releases/$ARCH/$ROOTFS_FILE" "$CACHE/$ROOTFS_FILE"
+# latest-releases.yaml publishes the sha256 of each file; refuse a mismatch.
+ROOTFS_SHA=$(awk '/minirootfs/{f=1} f&&/sha256:/{print $2; exit}' "$CACHE/latest-releases.yaml")
+if [ -n "$ROOTFS_SHA" ]; then
+  GOT=$(shasum -a 256 "$CACHE/$ROOTFS_FILE" | cut -d' ' -f1)
+  [ "$GOT" = "$ROOTFS_SHA" ] || { echo "minirootfs checksum mismatch: $GOT != $ROOTFS_SHA" >&2; rm -f "$CACHE/$ROOTFS_FILE"; exit 1; }
+  log "minirootfs sha256 verified"
+fi
 fetch "$MIRROR/$ALPINE_BRANCH/main/$ARCH/linux-virt-$KVER.apk" "$CACHE/linux-virt-$KVER.apk"
 
 # Unpack the kernel package (an apk is a tar.gz with extra headers bsdtar warns about).
@@ -65,6 +72,7 @@ install -m 0755 "$WORK/build-rootfs.sh" "$ROOT/etc/llok/build-rootfs.sh"
 mkdir -p "$ROOT/usr/local/bin"
 install -m 0755 "$WORK/llok-guest" "$ROOT/usr/local/bin/llok-guest"
 echo "$ALPINE_BRANCH" > "$ROOT/etc/llok/alpine-branch"
+echo "${LLOK_CLAUDE_VERSION:-latest}" > "$ROOT/etc/llok/claude-version"
 
 # Only the modules we need, decompressed so busybox insmod takes them by path.
 MODDIR=$(ls -d "$KDIR"/lib/modules/*)

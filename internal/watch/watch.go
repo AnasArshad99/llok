@@ -42,10 +42,13 @@ func Start(root string, fn func(path, op string)) (func(), error) {
 	return es.Stop, nil
 }
 
-// interesting drops git's internal bookkeeping but keeps hooks.
+// interesting drops git's object and index churn but keeps the parts of
+// .git that influence what runs on the host.
 func interesting(rel string) bool {
 	if strings.HasPrefix(rel, ".git/") {
-		return strings.HasPrefix(rel, ".git/hooks/")
+		return strings.HasPrefix(rel, ".git/hooks/") ||
+			strings.HasPrefix(rel, ".git/info/") ||
+			rel == ".git/config"
 	}
 	return true
 }

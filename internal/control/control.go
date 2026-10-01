@@ -25,9 +25,10 @@ type Command struct {
 
 // Reply is one message guest -> host.
 type Reply struct {
-	Op  string `json:"op"`
-	OK  bool   `json:"ok"`
-	Err string `json:"err,omitempty"`
+	Op   string `json:"op"`
+	OK   bool   `json:"ok"`
+	Err  string `json:"err,omitempty"`
+	Code int    `json:"code,omitempty"` // op "exit": the session's exit status
 }
 
 // Host owns the current guest connection (the latest one wins).
@@ -55,10 +56,16 @@ func (h *Host) Serve(l net.Listener) {
 	}
 }
 
+// attach keeps the first connection for the life of the session. llok's
+// root-owned guest agent connects at boot before any agent code runs; a
+// later connection can only come from something inside the guest trying to
+// impersonate it, so it is refused.
 func (h *Host) attach(c net.Conn) {
 	h.mu.Lock()
 	if h.conn != nil {
-		h.conn.Close()
+		h.mu.Unlock()
+		c.Close()
+		return
 	}
 	h.conn = c
 	h.enc = json.NewEncoder(c)
@@ -81,7 +88,7 @@ func (h *Host) readReplies(c net.Conn) {
 	}
 	h.mu.Lock()
 	if h.conn == c {
-		h.conn, h.enc = nil, nil
+		h.enc = nil // keep conn set: the slot stays claimed, no replacement
 	}
 	h.mu.Unlock()
 }

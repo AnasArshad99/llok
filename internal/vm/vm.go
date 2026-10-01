@@ -46,6 +46,13 @@ type Options struct {
 	Cols     int       // terminal size reported to the guest (0 = detect)
 	Rows     int
 	OnMarker func(string) // called for each out-of-band guest marker
+	// Sanitize strips everything but text and colours from console output.
+	// Set when Output is a real terminal or a log rather than the UI
+	// emulator, which renders untrusted bytes safely on its own.
+	Sanitize bool
+	// ExitCode, when set, is consulted after the VM stops and overrides the
+	// console marker (which any guest process could forge).
+	ExitCode func() (code int, ok bool)
 }
 
 // Machine lets a supervisor pause, resume or stop the running VM.
@@ -260,9 +267,14 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	// Guest output -> marker filter -> (noise filter in command mode) -> caller's writer.
 	exitCode := -1
 	var sink io.Writer = o.Output
+	var san *sanitizer
+	if o.Sanitize {
+		san = &sanitizer{w: sink}
+		sink = san
+	}
 	var noise *kernelNoise
 	if !o.Interactive {
-		noise = &kernelNoise{w: o.Output}
+		noise = &kernelNoise{w: sink}
 		sink = noise
 	}
 	filter := &markerFilter{w: sink, on: func(m string) {
@@ -280,6 +292,9 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		filter.Flush()
 		if noise != nil {
 			noise.Flush()
+		}
+		if san != nil {
+			san.Flush()
 		}
 	}()
 
@@ -407,6 +422,11 @@ func Run(ctx context.Context, o Options) (Result, error) {
 
 	if res.Forced {
 		return res, nil
+	}
+	if o.ExitCode != nil {
+		if c, ok := o.ExitCode(); ok {
+			exitCode = c // trusted channel wins over the console marker
+		}
 	}
 	if (o.Command != "" || o.Mode != "") && exitCode < 0 {
 		return res, fmt.Errorf("guest stopped without reporting an exit status")

@@ -303,7 +303,7 @@ func (s *Session) Marker(m string) {
 	switch {
 	case strings.HasPrefix(m, "LLOK_INFO"):
 		if i := strings.Index(m, "rootfs="); i >= 0 {
-			s.rootfs = m[i+7:]
+			s.rootfs = clean(m[i+7:])
 		}
 	case strings.HasPrefix(m, "LLOK_READY"):
 		s.state = "running"
@@ -340,9 +340,21 @@ func (s *Session) event(e string) {
 	s.mu.Unlock()
 }
 
+// clean strips control characters and escapes from text that may originate
+// in the guest (file names, hosts, markers) before it is drawn on the host
+// terminal outside the emulator.
+func clean(t string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == 0x9b || (r >= 0x80 && r < 0xa0) {
+			return -1
+		}
+		return r
+	}, t)
+}
+
 func (s *Session) eventLocked(e string) {
 	ts := time.Since(s.start).Round(time.Second)
-	s.events = append(s.events, sFaint.Render(fmtDur(ts))+" "+sDim.Render(e))
+	s.events = append(s.events, sFaint.Render(fmtDur(ts))+" "+sDim.Render(clean(e)))
 	if len(s.events) > 200 {
 		s.events = s.events[len(s.events)-200:]
 	}

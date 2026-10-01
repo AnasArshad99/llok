@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -136,7 +137,12 @@ off from the host.`,
 				Interactive: interactive,
 				HideBanner:  useUI,
 			}
-			opts.NAT = devNAT
+			if devNAT {
+				if os.Getenv("LLOK_DEV") != "1" {
+					return errors.New("--dev-nat attaches a network device to a session VM; set LLOK_DEV=1 if you really mean it")
+				}
+				opts.NAT = true
+			}
 			if hasRootfs {
 				opts.Disk = rootfs
 				opts.DiskReadOnly = true
@@ -169,6 +175,20 @@ off from the host.`,
 			}
 
 			ctl := control.New()
+			var exitMu sync.Mutex
+			exitCode, exitSeen := 0, false
+			ctl.OnReply = func(r control.Reply) {
+				if r.Op == "exit" {
+					exitMu.Lock()
+					exitCode, exitSeen = r.Code, true
+					exitMu.Unlock()
+				}
+			}
+			opts.ExitCode = func() (int, bool) {
+				exitMu.Lock()
+				defer exitMu.Unlock()
+				return exitCode, exitSeen
+			}
 			opts.Vsock = map[uint32]func(net.Listener){
 				control.Port: ctl.Serve,
 			}
@@ -217,12 +237,20 @@ off from the host.`,
 				}
 				sess.Start()
 			} else {
+				// Outside the UI the guest's bytes reach a real terminal or a
+				// log: keep text and colours, drop everything that could
+				// program the terminal.
 				opts.Output = io.Writer(os.Stdout)
+				opts.Sanitize = true
 			}
 
 			res, err := vm.Run(ctx, opts)
 			if sess != nil {
 				sess.Stop()
+			}
+			if why := eng.StoppedBy(); why != "" {
+				fmt.Fprintln(os.Stderr, styleErr.Render("llok")+" · vm stopped by the supervisor: "+why)
+				os.Exit(125)
 			}
 			if err != nil {
 				return err

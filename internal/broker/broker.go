@@ -259,7 +259,14 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		ev.Decision = "allow"
 		rec := &statusRecorder{ResponseWriter: w}
-		b.fwd.ServeHTTP(rec, r)
+		if providerHosts[hostOnly(r.URL.Host)] {
+			// Never send the provider's traffic in the clear: upgrade to the
+			// TLS route, which also injects the credential.
+			ev.Kind = "api"
+			b.providerProxy(hostOnly(r.URL.Host)).ServeHTTP(rec, r)
+		} else {
+			b.fwd.ServeHTTP(rec, r)
+		}
 		ev.Status = rec.status
 		b.emit(ev, start)
 
@@ -372,12 +379,10 @@ func (b *Broker) intercept(w http.ResponseWriter, r *http.Request) string {
 	io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
 
 	tlsConn := tls.Server(conn, &tls.Config{
-		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			name := host
-			if hello.ServerName != "" {
-				name = strings.ToLower(hello.ServerName)
-			}
-			return b.CA.Leaf(name)
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			// Always the CONNECT host: the guest does not get to choose
+			// which name the llok CA signs for.
+			return b.CA.Leaf(host)
 		},
 		NextProtos: []string{"http/1.1"},
 		MinVersion: tls.VersionTLS12,

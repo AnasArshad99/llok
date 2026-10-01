@@ -31,27 +31,39 @@ apk -p /mnt --initdb -U --no-cache -q --no-progress add \
 echo llok > /mnt/etc/hostname
 cp /etc/resolv.conf /mnt/etc/resolv.conf
 
-log "installing Claude Code"
+# The agent runs as this unprivileged user; root is reserved for llok's own
+# agent so a compromised coding agent cannot tamper with it.
+chroot /mnt /usr/sbin/adduser -D -u 1000 -s /bin/bash -h /home/agent agent
+
+CLAUDE_WANT=$(cat /etc/llok/claude-version 2>/dev/null || echo latest)
+log "installing Claude Code ($CLAUDE_WANT)"
 mount -t proc proc /mnt/proc
 mount -t sysfs sys /mnt/sys
 mount --bind /dev /mnt/dev
-if ! chroot /mnt /bin/bash -lc 'curl -fsSL https://claude.ai/install.sh | bash' >/tmp/claude-install.log 2>&1; then
+if ! chroot /mnt /bin/bash -lc "curl -fsSL https://claude.ai/install.sh | bash -s -- $CLAUDE_WANT" >/tmp/claude-install.log 2>&1; then
   log "native installer failed, falling back to npm"; tail -5 /tmp/claude-install.log
   chroot /mnt /bin/bash -lc 'npm install -g @anthropic-ai/claude-code' >/tmp/claude-install.log 2>&1 \
     || { tail -20 /tmp/claude-install.log; exit 3; }
 fi
-# The native installer puts a symlink in /root/.local/bin (absolute target, so
-# it only resolves inside the chroot). Expose it on the default PATH.
+# The native installer puts the binary under /root, unreachable by the agent
+# user. Copy the real file (following symlinks inside the chroot) onto the
+# default PATH, root-owned and world-executable but not writable.
 mkdir -p /mnt/usr/local/bin
-if [ -e /mnt/root/.local/bin/claude ]; then
-  ln -sf /root/.local/bin/claude /mnt/usr/local/bin/claude
+# (-L: the installer's link has an absolute target that only resolves inside
+# the chroot, so test and copy from inside it.)
+if [ -L /mnt/root/.local/bin/claude ] || [ -e /mnt/root/.local/bin/claude ]; then
+  chroot /mnt /bin/sh -c 'cp -L /root/.local/bin/claude /usr/local/bin/claude.new && mv /usr/local/bin/claude.new /usr/local/bin/claude'
+  chmod 0755 /mnt/usr/local/bin/claude
 fi
-CLAUDE_VER=$(chroot /mnt /bin/bash -c 'PATH=/root/.local/bin:/usr/local/bin:$PATH claude --version' 2>&1 | head -1 | tr -d '\r')
-[ -n "$CLAUDE_VER" ] || { echo "llok build: claude not runnable after install" >&2; tail -20 /tmp/claude-install.log; exit 4; }
-log "claude code: $CLAUDE_VER"
+[ -x /mnt/usr/local/bin/claude ] || { echo "llok build: /usr/local/bin/claude missing after install" >&2; ls -la /mnt/root/.local/bin/ >&2; exit 4; }
+CLAUDE_VER=$(chroot /mnt /bin/sh -c 'su agent -s /bin/sh -c "claude --version"' 2>&1 | head -1 | tr -d '\r')
+[ -n "$CLAUDE_VER" ] || { echo "llok build: claude not runnable as the agent user" >&2; tail -20 /tmp/claude-install.log; exit 4; }
+CLAUDE_SHA=$(sha256sum /mnt/usr/local/bin/claude 2>/dev/null | cut -c1-16)
+log "claude code: $CLAUDE_VER (sha256 $CLAUDE_SHA…)"
 umount /mnt/dev /mnt/sys /mnt/proc
 
 echo "alpine $(cat /mnt/etc/alpine-release) · claude-code $CLAUDE_VER" > /mnt/etc/llok/rootfs-info
+echo "claude sha256 $(sha256sum /mnt/usr/local/bin/claude | cut -d' ' -f1)" >> /mnt/etc/llok/rootfs-info
 log "root disk uses $(du -sh /mnt 2>/dev/null | cut -f1)"
 umount /mnt
 sync

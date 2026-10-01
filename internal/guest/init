@@ -124,19 +124,29 @@ else
   NET_DESC="none"
 fi
 t "broker set up"
+# The session runs as the unprivileged "agent" user when the root disk
+# provides one; root stays with llok's own agent. Initramfs-only sessions
+# have no users database and stay root.
+AGENT_USER=root; AGENT_HOME=/root
+if [ "$STAGE" = 2 ] && grep -q '^agent:' /etc/passwd 2>/dev/null; then
+  AGENT_USER=agent; AGENT_HOME=/home/agent
+  mkdir -p "$AGENT_HOME"; chown agent:agent "$AGENT_HOME"
+  chown agent /dev/hvc0 2>/dev/null
+fi
+
 # Skip Claude Code's first-run wizard (theme, sign-in, folder trust): the
 # credential comes from the environment and the home dir is fresh every boot.
-# The root disk may already carry a .claude.json from the installer, so merge.
-mkdir -p /root
+CJ="$AGENT_HOME/.claude.json"
 if command -v jq >/dev/null 2>&1; then
-  { [ -s /root/.claude.json ] && cat /root/.claude.json || echo '{}'; } \
+  { [ -s "$CJ" ] && cat "$CJ" || echo '{}'; } \
     | jq --arg repo "$REPO" '. + {hasCompletedOnboarding:true, theme:"dark"}
         | .projects = (.projects // {})
         | .projects[$repo] = ((.projects[$repo] // {}) + {hasTrustDialogAccepted:true})' \
-    > /tmp/.claude.json 2>/dev/null && mv /tmp/.claude.json /root/.claude.json
+    > /tmp/.claude.json 2>/dev/null && mv /tmp/.claude.json "$CJ"
 else
-  printf '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"%s":{"hasTrustDialogAccepted":true}}}\n' "$REPO" > /root/.claude.json
+  printf '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"%s":{"hasTrustDialogAccepted":true}}}\n' "$REPO" > "$CJ"
 fi
+[ "$AGENT_USER" = root ] || chown agent:agent "$CJ"
 
 t "claude.json merged"
 [ -n "$COLS" ] && [ -n "$ROWS" ] && stty -F /dev/hvc0 cols "$COLS" rows "$ROWS" 2>/dev/null
@@ -148,7 +158,7 @@ export PATH=/root/.local/bin:\$PATH
 export TERM=xterm-256color
 export LLOK_VM=1
 export LLOK_PROJECT="$NAME"
-export PS1='\[\e[1;35m\]llok\[\e[0m\]\[\e[2m\]@$NAME\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\] \[\e[1;35m\]#\[\e[0m\] '
+export PS1='\[\e[1;35m\]llok\[\e[0m\]\[\e[2m\]@$NAME\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\] \[\e[1;35m\]\$\[\e[0m\] '
 alias ll='ls -la'
 $BROKER_ENV
 PROFILE
@@ -177,16 +187,34 @@ banner() {
 SHELL_BIN=/bin/sh
 [ -x /bin/bash ] && SHELL_BIN=/bin/bash
 
+# report_exit tells the host the session's exit status through llok's own
+# root-owned control agent. The console marker is kept as a fallback only;
+# the agent user can print anything to the console, so the host prefers
+# the control channel.
+report_exit() {
+  llok-guest exit "$1" 2>/dev/null
+  marker "LLOK_EXIT $1"
+}
+
 cd "$REPO" || cd /
 CMD_B64=$(cmdline_val llok.cmd)
 if [ -n "$CMD_B64" ]; then
   echo "$CMD_B64" | base64 -d > /tmp/llok-cmd.sh
-  LLOK_VM=1 LLOK_PROJECT="$NAME" $SHELL_BIN -c ". /etc/profile.d/llok.sh; . /tmp/llok-cmd.sh"
-  marker "LLOK_EXIT $?"
+  chmod 0644 /tmp/llok-cmd.sh
+  if [ "$AGENT_USER" = root ]; then
+    LLOK_VM=1 LLOK_PROJECT="$NAME" $SHELL_BIN -c ". /etc/profile.d/llok.sh; . /tmp/llok-cmd.sh"
+  else
+    su agent -s "$SHELL_BIN" -c "cd '$REPO'; export LLOK_VM=1 LLOK_PROJECT='$NAME'; . /etc/profile.d/llok.sh; . /tmp/llok-cmd.sh"
+  fi
+  report_exit $?
 else
   [ "$BANNER" != 0 ] && banner > /dev/hvc0
-  setsid sh -c "exec $SHELL_BIN -l </dev/hvc0 >/dev/hvc0 2>&1"
-  marker "LLOK_EXIT 0"
+  if [ "$AGENT_USER" = root ]; then
+    setsid sh -c "exec $SHELL_BIN -l </dev/hvc0 >/dev/hvc0 2>&1"
+  else
+    setsid sh -c "cd '$REPO'; exec su agent -s $SHELL_BIN -c 'cd $REPO; exec $SHELL_BIN -l' </dev/hvc0 >/dev/hvc0 2>&1"
+  fi
+  report_exit 0
 fi
 
 sync

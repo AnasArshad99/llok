@@ -69,6 +69,21 @@ func Defaults() []Rule {
 			Message: "CI workflow changed"},
 		{Name: "mass-delete", On: KindFile, Op: "delete", Burst: &Burst{Count: 50, Seconds: 10}, Action: ActPause,
 			Message: "many files deleted in a short time"},
+		// Files git itself executes or consults on your Mac at the next
+		// git command: hooksPath, fsmonitor, filters, external diff/merge.
+		{Name: "git-config", On: KindFile, Path: ".git/config", Action: ActPause,
+			Message: ".git/config was changed; it can point git at commands that run on your Mac"},
+		{Name: "git-attributes", On: KindFile, Path: ".gitattributes", Action: ActNotify,
+			Message: ".gitattributes changed (filters, diff drivers)"},
+		{Name: "git-info", On: KindFile, Path: ".git/info/*", Action: ActNotify,
+			Message: ".git/info changed (attributes, excludes)"},
+		// Tools that run repo files automatically when you open the folder.
+		{Name: "direnv", On: KindFile, Path: ".envrc", Action: ActPause,
+			Message: ".envrc was written; direnv runs it when you cd into the repo"},
+		{Name: "editor-tasks", On: KindFile, Path: ".vscode/*", Action: ActNotify,
+			Message: "VS Code settings/tasks changed (can auto-run commands)"},
+		{Name: "idea-config", On: KindFile, Path: ".idea/*", Action: ActNotify,
+			Message: "JetBrains project config changed"},
 	}
 }
 
@@ -142,13 +157,29 @@ type Engine struct {
 	Machine func() Machine
 	Ledger  *Ledger
 
-	rules  []Rule
-	exact  map[Kind]map[string][]int // kind -> exact path/host -> rule indexes
-	globs  map[Kind][]int            // kind -> rule indexes with glob patterns
-	any    map[Kind][]int            // kind -> rule indexes with no path/host
-	mu     sync.Mutex
-	bursts map[int][]time.Time
-	paused bool
+	rules   []Rule
+	exact   map[Kind]map[string][]int // kind -> exact path/host -> rule indexes
+	globs   map[Kind][]int            // kind -> rule indexes with glob patterns
+	any     map[Kind][]int            // kind -> rule indexes with no path/host
+	mu      sync.Mutex
+	bursts  map[int][]time.Time
+	paused  bool
+	stopped string // name/reason of the rule that stopped the VM, if any
+}
+
+// StoppedBy returns the reason the engine stopped the VM, or "".
+func (e *Engine) StoppedBy() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stopped
+}
+
+func (e *Engine) markStopped(reason string) {
+	e.mu.Lock()
+	if e.stopped == "" {
+		e.stopped = reason
+	}
+	e.mu.Unlock()
 }
 
 // New builds an engine over rs.
@@ -300,6 +331,7 @@ func (e *Engine) pause(msg string) {
 	m := e.machine()
 	if e.Ask == nil {
 		e.notify("✗ vm stopped (no one to ask): " + msg)
+		e.markStopped(msg)
 		e.do(m, "stop", Machine.Stop)
 		return
 	}
@@ -309,6 +341,7 @@ func (e *Engine) pause(msg string) {
 	k := e.Ask("VM paused: "+msg, []Option{{'r', "resume"}, {'K', "kill"}})
 	if k == 'K' {
 		e.notify("✗ vm killed by you")
+		e.markStopped("killed by you: " + msg)
 		e.do(m, "stop", Machine.Stop)
 		return
 	}
@@ -318,6 +351,7 @@ func (e *Engine) pause(msg string) {
 
 func (e *Engine) kill(msg string) {
 	e.notify("✗ vm stopped: " + msg)
+	e.markStopped(msg)
 	e.do(e.machine(), "stop", Machine.Stop)
 }
 

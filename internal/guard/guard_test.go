@@ -70,7 +70,7 @@ func TestIndexedCandidates(t *testing.T) {
 	rs = append(rs, Defaults()...)
 	e := New(rs)
 	c := e.candidates(Event{Kind: KindFile, Path: "README.md"})
-	if len(c) > 5 {
+	if len(c) > len(Defaults()) {
 		t.Errorf("expected only glob/any candidates, got %d", len(c))
 	}
 	c = e.candidates(Event{Kind: KindFile, Path: "vendor/pkga/file"})

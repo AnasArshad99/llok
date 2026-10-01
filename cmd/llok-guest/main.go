@@ -19,15 +19,19 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: llok-guest proxy|control [flags]")
+		fmt.Fprintln(os.Stderr, "usage: llok-guest proxy|control|exit [flags]")
 		os.Exit(2)
 	}
-	if os.Args[1] == "control" {
+	switch os.Args[1] {
+	case "control":
 		controlLoop(os.Args[2:])
+		return
+	case "exit":
+		sendExit(os.Args[2:])
 		return
 	}
 	if os.Args[1] != "proxy" {
-		fmt.Fprintln(os.Stderr, "usage: llok-guest proxy|control [flags]")
+		fmt.Fprintln(os.Stderr, "usage: llok-guest proxy|control|exit [flags]")
 		os.Exit(2)
 	}
 	fs := flag.NewFlagSet("proxy", flag.ExitOnError)
