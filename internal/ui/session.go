@@ -204,20 +204,27 @@ func (s *Session) layout() {
 func (s *Session) ConsoleSize() (cols, rows int) { return s.consoleW, s.rows }
 
 // Start takes over the terminal and begins rendering.
+//
+// Before switching to the alternate screen we reset the terminal's
+// scroll region and origin mode. A previous full-screen program (Claude
+// Code's own UI sets a scroll region) can leave them behind, and every
+// absolute cursor move would then land inside that strip at the bottom
+// of the window instead of on a clean full screen.
 func (s *Session) Start() {
-	fmt.Fprint(s.out, "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H")
-	if s.info.Mouse {
-		fmt.Fprint(s.out, mouseOn)
-	}
+	fmt.Fprint(s.out, termReset+"\x1b[?1049h"+termReset+"\x1b[?25l\x1b[2J\x1b[H")
 	s.event("vm starting")
 	go s.loop()
 }
+
+// termReset clears scroll margins, origin mode and insert mode, and turns
+// autowrap on. It does not touch the alternate-screen state.
+const termReset = "\x1b[r\x1b[?6l\x1b[4l\x1b[?7h"
 
 // Stop restores the terminal.
 func (s *Session) Stop() {
 	close(s.stop)
 	<-s.done
-	fmt.Fprint(s.out, mouseOff+"\x1b[?25h\x1b[?1049l")
+	fmt.Fprint(s.out, mouseOff+termReset+"\x1b[?25h\x1b[?1049l"+termReset)
 }
 
 // Write feeds guest console bytes into the emulator.

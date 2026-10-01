@@ -24,6 +24,7 @@ func saneTerminal() {
 	t.Cc[unix.VMIN] = 1
 	t.Cc[unix.VTIME] = 0
 	_ = unix.IoctlSetTermios(fd, unix.TIOCSETA, t)
-	// Also leave the alternate screen in case it was never exited.
-	os.Stdout.WriteString("\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l")
+	// Also leave the alternate screen in case it was never exited, and clear
+	// any scroll region or origin mode a previous program left behind.
+	os.Stdout.WriteString("\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l\x1b[r\x1b[?6l\x1b[4l\x1b[?7h")
 }
