@@ -31,7 +31,7 @@ func newRoot() *cobra.Command {
 			saneTerminal()
 		},
 	}
-	root.AddCommand(newInitCmd(), newUpCmd(), newAuthCmd(), newAuditCmd(), newRulesCmd(), newGuestCmd(), newDoctorCmd(), newVersionCmd())
+	root.AddCommand(newInitCmd(), newUpCmd(), newAuthCmd(), newAuditCmd(), newRulesCmd(), newTrustCmd(), newGuestCmd(), newDoctorCmd(), newVersionCmd())
 	return root
 }
 

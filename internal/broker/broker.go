@@ -121,6 +121,7 @@ func New(project string, pol Policy, cred Credential, auditPath string) (*Broker
 	}
 	tr := &http.Transport{
 		Proxy:                 nil, // never chain through a host proxy
+		DialContext:           safeDialContext,
 		TLSHandshakeTimeout:   15 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Minute, // long model responses
 		IdleConnTimeout:       90 * time.Second,
@@ -286,7 +287,9 @@ func (b *Broker) proxyError(w http.ResponseWriter, r *http.Request, err error) {
 
 // tunnel handles CONNECT: dial the target from the host and splice bytes.
 func (b *Broker) tunnel(w http.ResponseWriter, r *http.Request) string {
-	up, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	up, err := safeDialContext(ctx, "tcp", r.Host)
 	if err != nil {
 		http.Error(w, "llok broker: "+err.Error(), http.StatusBadGateway)
 		return err.Error()
@@ -463,3 +466,37 @@ func (l *oneConnListener) Close() error {
 }
 
 func (l *oneConnListener) Addr() net.Addr { return l.addr }
+
+// safeDialContext resolves the destination on the host and refuses any
+// address that is loopback, private, link-local, or otherwise not a public
+// unicast address. An allowlisted name must not become a door to services
+// on the Mac or the local network, whether by configuration or by DNS
+// rebinding.
+func safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, err
+	}
+	d := &net.Dialer{Timeout: 10 * time.Second}
+	var last error
+	for _, ip := range ips {
+		ip = ip.Unmap()
+		if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() {
+			last = fmt.Errorf("refusing to connect to %s (%s is not a public address)", host, ip)
+			continue
+		}
+		c, err := d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return c, nil
+		}
+		last = err
+	}
+	if last == nil {
+		last = fmt.Errorf("no address for %s", host)
+	}
+	return nil, last
+}

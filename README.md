@@ -132,6 +132,10 @@ rules:
     message: lockfile changed
 ```
 
+Because `llok.yaml` travels with the repo, a policy that adds allowed hosts
+or changes rules must be approved once per repo (`llok up` asks, or run
+`llok trust`). Any later change to those parts asks again.
+
 Matching is indexed, so the cost per event does not grow with the number of
 rules. Every event and every rule outcome is written to a per-session ledger
 under `~/.llok/sessions/<project>/`.

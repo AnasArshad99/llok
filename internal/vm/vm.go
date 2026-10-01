@@ -364,6 +364,19 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		}
 	}
 
+	// stopGuest asks the guest to power off (sync + poweroff via the control
+	// channel) and pulls the plug if it has not stopped within 3 seconds.
+	// A second request, or no control channel, pulls the plug at once.
+	handle := machineHandle{machine}
+	var hardStop <-chan time.Time
+	stopGuest := func() {
+		res.Forced = true
+		if hardStop == nil && o.GracefulStop != nil && o.GracefulStop() {
+			hardStop = time.After(3 * time.Second)
+			return
+		}
+		_ = handle.Stop()
+	}
 	for running := true; running; {
 		select {
 		case st := <-machine.StateChangedNotify():
@@ -372,15 +385,11 @@ func Run(ctx context.Context, o Options) (Result, error) {
 				running = false
 			}
 		case <-forceStop:
-			res.Forced = true
-			if machine.CanStop() {
-				_ = machine.Stop()
-			}
+			stopGuest()
 		case <-ctx.Done():
-			res.Forced = true
-			if machine.CanStop() {
-				_ = machine.Stop()
-			}
+			stopGuest()
+		case <-hardStop:
+			_ = handle.Stop()
 		}
 	}
 	for _, l := range vls {

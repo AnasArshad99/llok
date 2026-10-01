@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -61,6 +62,9 @@ off from the host.`,
 			if err != nil {
 				return err
 			}
+			if err := ensureTrusted(cfg, absRepo); err != nil {
+				return err
+			}
 
 			interactive := command == ""
 			useUI := interactive && isTTY() && !plain
@@ -89,8 +93,11 @@ off from the host.`,
 			var shareDir string
 			if cfg.Network.Mode == "broker" {
 				cred, err := creds.Get("anthropic")
-				if err != nil {
+				if errors.Is(err, creds.ErrNotFound) {
 					return fmt.Errorf("network.mode is broker but no Claude credential is stored; run: llok auth claude  (or set network.mode: none)")
+				}
+				if err != nil {
+					return err
 				}
 				home, _ := guest.Home()
 				os.MkdirAll(filepath.Join(home, "audit"), 0o700)

@@ -3,6 +3,7 @@
 package watch
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -32,7 +33,7 @@ func Start(root string, fn func(path, op string)) (func(), error) {
 				if !ok || rel == "" || !interesting(rel) {
 					continue
 				}
-				if op := opFor(ev.Flags); op != "" {
+				if op := opFor(ev.Flags, filepath.Join(root, rel)); op != "" {
 					fn(rel, op)
 				}
 			}
@@ -49,13 +50,21 @@ func interesting(rel string) bool {
 	return true
 }
 
-func opFor(f fsevents.EventFlags) string {
-	if f&fsevents.ItemIsDir != 0 && f&fsevents.ItemRemoved == 0 {
-		return ""
+// opFor maps FSEvents flags to one operation. The flags are sticky for a
+// path within a stream (a file deleted earlier and recreated still carries
+// ItemRemoved), so the current state on disk decides between delete and
+// the rest.
+func opFor(f fsevents.EventFlags, abs string) string {
+	_, statErr := os.Lstat(abs)
+	gone := os.IsNotExist(statErr)
+	if f&fsevents.ItemIsDir != 0 && !gone {
+		return "" // directory creations/mods are noise; deletions are not
 	}
 	switch {
-	case f&fsevents.ItemRemoved != 0:
+	case gone && f&(fsevents.ItemRemoved|fsevents.ItemRenamed) != 0:
 		return "delete"
+	case gone:
+		return ""
 	case f&fsevents.ItemRenamed != 0:
 		return "rename"
 	case f&fsevents.ItemCreated != 0:

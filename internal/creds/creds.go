@@ -36,8 +36,11 @@ func Set(provider string, c Credential) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("security", "add-generic-password", "-U",
-		"-s", service, "-a", provider, "-l", "llok · "+provider, "-w", string(data))
+	// `security -i` reads commands from stdin, so the secret never appears
+	// on a command line where other processes could read it.
+	cmd := exec.Command("security", "-i")
+	cmd.Stdin = strings.NewReader(fmt.Sprintf("add-generic-password -U -s %s -a %s -l %s -w %s\n",
+		quote(service), quote(provider), quote("llok · "+provider), quote(string(data))))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -46,12 +49,24 @@ func Set(provider string, c Credential) error {
 	return nil
 }
 
+// quote wraps an argument for security's interactive command parser, which
+// accepts double-quoted strings with backslash escapes.
+func quote(s string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+}
+
 // Get loads the credential for provider.
 func Get(provider string) (Credential, error) {
-	out, err := exec.Command("security", "find-generic-password",
-		"-s", service, "-a", provider, "-w").Output()
+	cmd := exec.Command("security", "find-generic-password", "-s", service, "-a", provider, "-w")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return Credential{}, ErrNotFound
+		// errSecItemNotFound exits 44; anything else is a real Keychain problem.
+		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 44 {
+			return Credential{}, ErrNotFound
+		}
+		return Credential{}, fmt.Errorf("keychain: %s", strings.TrimSpace(stderr.String()))
 	}
 	var c Credential
 	if err := json.Unmarshal(bytes.TrimSpace(out), &c); err != nil {

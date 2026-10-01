@@ -1,15 +1,18 @@
 package guard
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-type fakeMachine struct{ paused, resumed, stopped int }
+// fakeMachine counts calls; the engine calls it from other goroutines, so
+// the counters are atomic.
+type fakeMachine struct{ paused, resumed, stopped atomic.Int32 }
 
-func (m *fakeMachine) Pause() error  { m.paused++; return nil }
-func (m *fakeMachine) Resume() error { m.resumed++; return nil }
-func (m *fakeMachine) Stop() error   { m.stopped++; return nil }
+func (m *fakeMachine) Pause() error  { m.paused.Add(1); return nil }
+func (m *fakeMachine) Resume() error { m.resumed.Add(1); return nil }
+func (m *fakeMachine) Stop() error   { m.stopped.Add(1); return nil }
 
 func TestMatch(t *testing.T) {
 	cases := []struct {
@@ -95,8 +98,8 @@ func TestGitHookPauseThenKill(t *testing.T) {
 		t.Fatal("hook write should pause and ask")
 	}
 	time.Sleep(20 * time.Millisecond)
-	if m.paused != 1 || m.stopped != 1 {
-		t.Errorf("paused=%d stopped=%d", m.paused, m.stopped)
+	if m.paused.Load() != 1 || m.stopped.Load() != 1 {
+		t.Errorf("paused=%d stopped=%d", m.paused, m.stopped.Load())
 	}
 }
 
@@ -110,7 +113,7 @@ func TestBurstFiresOnceAndResumes(t *testing.T) {
 	for i := 0; i < 49; i++ {
 		e.Observe(Event{Kind: KindFile, Op: "delete", Path: "f", Time: base.Add(time.Duration(i) * time.Millisecond)})
 	}
-	if m.paused != 0 {
+	if m.paused.Load() != 0 {
 		t.Fatal("49 deletes must not pause")
 	}
 	e.Observe(Event{Kind: KindFile, Op: "delete", Path: "f", Time: base.Add(50 * time.Millisecond)})
@@ -120,12 +123,12 @@ func TestBurstFiresOnceAndResumes(t *testing.T) {
 		t.Fatal("50th delete should pause")
 	}
 	time.Sleep(20 * time.Millisecond)
-	if m.paused != 1 || m.resumed != 1 {
-		t.Errorf("paused=%d resumed=%d", m.paused, m.resumed)
+	if m.paused.Load() != 1 || m.resumed.Load() != 1 {
+		t.Errorf("paused=%d resumed=%d", m.paused, m.resumed.Load())
 	}
 	// Deletes older than the window do not count.
 	e.Observe(Event{Kind: KindFile, Op: "delete", Path: "f", Time: base.Add(30 * time.Second)})
-	if m.paused != 1 {
+	if m.paused.Load() != 1 {
 		t.Error("a lone delete after the window must not pause")
 	}
 }
@@ -136,7 +139,7 @@ func TestHeadlessPauseStops(t *testing.T) {
 	e.Machine = func() Machine { return m }
 	e.Observe(Event{Kind: KindFile, Op: "create", Path: ".git/hooks/post-checkout"})
 	time.Sleep(20 * time.Millisecond)
-	if m.stopped != 1 {
-		t.Errorf("with no one to ask, pause should stop the vm; stopped=%d", m.stopped)
+	if m.stopped.Load() != 1 {
+		t.Errorf("with no one to ask, pause should stop the vm; stopped=%d", m.stopped.Load())
 	}
 }

@@ -1,7 +1,9 @@
 package broker
 
 import (
+	"context"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -124,5 +126,14 @@ func TestLeafCertificates(t *testing.T) {
 	}
 	if !ca2.cert.Equal(ca.cert) {
 		t.Error("CA should be persisted and reloaded")
+	}
+}
+
+func TestSafeDialRefusesLocalAddresses(t *testing.T) {
+	for _, addr := range []string{"localhost:80", "127.0.0.1:80", "[::1]:80", "10.0.0.1:443", "192.168.1.1:443", "169.254.169.254:80"} {
+		_, err := safeDialContext(context.Background(), "tcp", addr)
+		if err == nil || !strings.Contains(err.Error(), "not a public address") {
+			t.Errorf("safeDial(%q) should refuse a non-public address, got %v", addr, err)
+		}
 	}
 }

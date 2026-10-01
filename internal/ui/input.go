@@ -7,19 +7,12 @@ import (
 	"strings"
 )
 
-// Mouse reporting: while the session owns the screen we ask the terminal to
-// send mouse events to us instead of scrolling its own scrollback (which is
-// what makes the UI look "scrollable" in macOS Terminal). 1000 = button and
-// wheel events, 1006 = SGR encoding.
-const (
-	mouseOn  = "\x1b[?1000h\x1b[?1006h"
-	mouseOff = "\x1b[?1006l\x1b[?1000l"
-)
-
 const wheelStep = 3
 
-// Input wraps the host's stdin. It removes SGR mouse sequences, turning the
-// wheel into console scrollback, and passes everything else to the guest.
+// Input wraps the host's stdin. Keys go to an active prompt when one is up,
+// otherwise to the guest. SGR mouse reports (which a terminal may still
+// send if a previous program left mouse reporting on) are stripped and
+// turned into console scrollback rather than leaking into the guest.
 func (s *Session) Input(r io.Reader) io.Reader {
 	return &inputFilter{r: r, s: s}
 }
@@ -49,7 +42,7 @@ func (f *inputFilter) Read(p []byte) (int, error) {
 func (f *inputFilter) filter(data []byte) []byte {
 	var out []byte
 	// While a prompt is up, every key goes to it and nothing reaches the guest.
-	if f.s.prompt != nil {
+	if f.s.hasPrompt() {
 		for _, b := range data {
 			f.s.promptKey(b)
 		}
