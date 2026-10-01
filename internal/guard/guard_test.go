@@ -99,7 +99,7 @@ func TestGitHookPauseThenKill(t *testing.T) {
 	}
 	time.Sleep(20 * time.Millisecond)
 	if m.paused.Load() != 1 || m.stopped.Load() != 1 {
-		t.Errorf("paused=%d stopped=%d", m.paused, m.stopped.Load())
+		t.Errorf("paused=%d stopped=%d", m.paused.Load(), m.stopped.Load())
 	}
 }
 
@@ -124,7 +124,7 @@ func TestBurstFiresOnceAndResumes(t *testing.T) {
 	}
 	time.Sleep(20 * time.Millisecond)
 	if m.paused.Load() != 1 || m.resumed.Load() != 1 {
-		t.Errorf("paused=%d resumed=%d", m.paused, m.resumed.Load())
+		t.Errorf("paused=%d resumed=%d", m.paused.Load(), m.resumed.Load())
 	}
 	// Deletes older than the window do not count.
 	e.Observe(Event{Kind: KindFile, Op: "delete", Path: "f", Time: base.Add(30 * time.Second)})
