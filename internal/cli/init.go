@@ -44,7 +44,7 @@ func newInitCmd() *cobra.Command {
 				{"agent", cfg.Agent},
 				{"vm", fmt.Sprintf("%d vCPU · %d MiB", cfg.VM.CPUs, cfg.VM.MemoryMB)},
 				{"repo", cwd + "  →  /repo (rw)"},
-				{"network", "none (only the llok broker, later)"},
+				{"network", cfg.Network.Mode + "  →  api.anthropic.com only, plus network.allow"},
 				{"policy", config.FileName},
 			}))
 			fmt.Fprintln(os.Stderr)
