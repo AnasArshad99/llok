@@ -12,6 +12,7 @@
 package broker
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -412,6 +413,20 @@ func (s *statusRecorder) Flush() {
 	if f, ok := s.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack lets the reverse proxy complete protocol upgrades (WebSocket),
+// which agents use as a streaming transport. Without it every upgrade
+// fails with 502.
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := s.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("upgrade not supported on this connection")
+	}
+	if s.status == 0 {
+		s.status = http.StatusSwitchingProtocols
+	}
+	return hj.Hijack()
 }
 
 // intercept answers a CONNECT to a provider host by terminating TLS with a

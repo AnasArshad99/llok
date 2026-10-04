@@ -1,8 +1,13 @@
 package broker
 
 import (
+	"bufio"
 	"context"
+	"fmt"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"testing"
@@ -148,5 +153,73 @@ func TestSafeDialRefusesLocalAddresses(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "not a public address") {
 			t.Errorf("safeDial(%q) should refuse a non-public address, got %v", addr, err)
 		}
+	}
+}
+
+func TestStatusRecorderSupportsHijack(t *testing.T) {
+	var _ http.Hijacker = &statusRecorder{}
+	rec := &statusRecorder{ResponseWriter: httptest.NewRecorder()}
+	if _, _, err := rec.Hijack(); err == nil {
+		t.Error("a non-hijackable writer should report an error, not panic")
+	}
+}
+
+// A WebSocket upgrade must pass through the provider proxy end to end.
+func TestProviderProxyWebSocketUpgrade(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Upgrade") != "websocket" || r.Header.Get("Authorization") != "Bearer REAL-SECRET" {
+			http.Error(w, "bad upgrade", http.StatusBadRequest)
+			return
+		}
+		c, buf, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+		buf.Flush()
+		line, _ := buf.ReadString('\n')
+		buf.WriteString("echo:" + line)
+		buf.Flush()
+	}))
+	defer upstream.Close()
+
+	b := newTestBroker(t, "oauth")
+	u, _ := url.Parse(upstream.URL)
+	rt := b.Routes[0]
+	rt.Upstream = u
+	px := b.providerProxy("test-upstream", rt)
+	px.Rewrite = func(pr *httputil.ProxyRequest) { // plain http upstream for the test
+		pr.SetURL(u)
+		pr.Out.Host = u.Host
+		b.inject(pr.Out.Header, rt, false)
+	}
+	px.Transport = &http.Transport{} // the real one refuses loopback by design
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		px.ServeHTTP(&statusRecorder{ResponseWriter: w}, r)
+	}))
+	defer front.Close()
+
+	conn, err := net.Dial("tcp", strings.TrimPrefix(front.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "GET /v1/responses HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nAuthorization: Bearer llok-placeholder-token\r\n\r\n")
+	rd := bufio.NewReader(conn)
+	status, _ := rd.ReadString('\n')
+	if !strings.Contains(status, "101") {
+		t.Fatalf("expected 101 through the proxy, got %q", status)
+	}
+	for { // skip headers
+		l, _ := rd.ReadString('\n')
+		if l == "\r\n" {
+			break
+		}
+	}
+	fmt.Fprint(conn, "hello\n")
+	reply, _ := rd.ReadString('\n')
+	if reply != "echo:hello\n" {
+		t.Errorf("bytes after the upgrade did not flow: %q", reply)
 	}
 }
