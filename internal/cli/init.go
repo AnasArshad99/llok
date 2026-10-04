@@ -27,35 +27,40 @@ func newInitCmd() *cobra.Command {
 			if err := checkRepoDir(cwd); err != nil {
 				return err
 			}
-			cfg := config.Default()
-			cfg.Name = filepath.Base(cwd)
-
-			if !yes && isTTY() {
-				if err := runInitForm(cfg); err != nil {
-					return err
-				}
-			}
-			if err := os.WriteFile(config.FileName, cfg.Render(), 0o644); err != nil {
-				return err
-			}
-
-			printBox("llok initialised", kv([][2]string{
-				{"project", cfg.Name},
-				{"agent", cfg.Agent},
-				{"vm", fmt.Sprintf("%d vCPU · %d MiB", cfg.VM.CPUs, cfg.VM.MemoryMB)},
-				{"repo", cwd + "  →  /repo (rw)"},
-				{"network", cfg.Network.Mode + "  →  api.anthropic.com only, plus network.allow"},
-				{"policy", config.FileName},
-			}))
-			fmt.Fprintln(os.Stderr)
-			fmt.Fprintln(os.Stderr, styleDim.Render("next:")+"  llok             "+styleDim.Render("open a session inside the VM"))
-			fmt.Fprintln(os.Stderr, "       llok up -c CMD   "+styleDim.Render("run one command and power off"))
-			return nil
+			_, err := setupRepo(cwd, !yes && isTTY())
+			return err
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing llok.yaml")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "accept defaults without prompting")
 	return cmd
+}
+
+// setupRepo creates llok.yaml in dir, asking the setup questions when
+// interactive, and prints the summary. It is used by `llok init` and by
+// `llok` itself when it finds a repo without a policy file.
+func setupRepo(dir string, interactive bool) (*config.Config, error) {
+	cfg := config.Default()
+	cfg.Name = filepath.Base(dir)
+	if interactive {
+		if err := runInitForm(cfg); err != nil {
+			return nil, err
+		}
+	}
+	path := filepath.Join(dir, config.FileName)
+	if err := os.WriteFile(path, cfg.Render(), 0o644); err != nil {
+		return nil, err
+	}
+	printBox("llok initialised", kv([][2]string{
+		{"project", cfg.Name},
+		{"agent", cfg.Agent},
+		{"vm", fmt.Sprintf("%d vCPU · %d MiB", cfg.VM.CPUs, cfg.VM.MemoryMB)},
+		{"repo", dir + "  →  " + cfg.Mount.Repo + " (rw)"},
+		{"network", cfg.Network.Mode + "  →  api.anthropic.com only, plus network.allow"},
+		{"policy", path},
+	}))
+	fmt.Fprintln(os.Stderr)
+	return cfg, nil
 }
 
 func runInitForm(cfg *config.Config) error {

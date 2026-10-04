@@ -45,6 +45,26 @@ shell on the left, VM status on the right. With --cmd the command runs in the
 repo and the VM powers off when it exits. Press Ctrl-] twice to force the VM
 off from the host.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			absRepo, err := filepath.Abs(repo)
+			if err != nil {
+				return err
+			}
+			if err := checkRepoDir(absRepo); err != nil {
+				return err
+			}
+			// First run in this repo: set it up rather than boot on silent
+			// defaults. Interactively that is the same flow as llok init.
+			if _, statErr := os.Stat(filepath.Join(absRepo, config.FileName)); os.IsNotExist(statErr) {
+				if command == "" && isTTY() {
+					fmt.Fprintln(os.Stderr, styleTitle.Render("llok")+" · no "+config.FileName+" in "+absRepo+" yet. A few questions, then the VM boots.")
+					fmt.Fprintln(os.Stderr)
+					if _, err := setupRepo(absRepo, true); err != nil {
+						return err
+					}
+				} else {
+					fmt.Fprintln(os.Stderr, styleDim.Render("no "+config.FileName+" in "+absRepo+"; using defaults (run llok init to create one)"))
+				}
+			}
 			cfg, err := config.Load(repo)
 			if err != nil {
 				return err
@@ -54,13 +74,6 @@ off from the host.`,
 			}
 			if memMB == 0 {
 				memMB = cfg.VM.MemoryMB
-			}
-			absRepo, err := filepath.Abs(repo)
-			if err != nil {
-				return err
-			}
-			if err := checkRepoDir(absRepo); err != nil {
-				return err
 			}
 			kernel, initrd, err := guest.Paths()
 			if err != nil {

@@ -45,9 +45,11 @@ Requires an Apple silicon Mac on macOS 26 or newer, Go 1.26, and the Xcode comma
 ```bash
 llok auth claude    # sign in once; the token goes to your Keychain, never the VM
 cd your-repo
-llok init           # writes llok.yaml
-llok                # boots the VM and takes over the terminal; run `claude` inside
+llok                # first run asks a few questions and writes llok.yaml, then boots
 ```
+
+Inside the VM, run `claude`. `llok init` writes the policy file without
+booting; `llok init --force` regenerates it.
 
 `llok` (or `llok up`) shows the VM console on the left and a live panel on the right: state, repo mapping, VM size, network policy, uptime, and every request the broker allowed or refused.
 
