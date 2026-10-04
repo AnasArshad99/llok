@@ -140,21 +140,6 @@ if [ "$STAGE" = 2 ] && grep -q '^agent:' /etc/passwd 2>/dev/null; then
   chown agent /dev/hvc0 2>/dev/null
 fi
 
-# Skip Claude Code's first-run wizard (theme, sign-in, folder trust): the
-# credential comes from the environment and the home dir is fresh every boot.
-CJ="$AGENT_HOME/.claude.json"
-if command -v jq >/dev/null 2>&1; then
-  { [ -s "$CJ" ] && cat "$CJ" || echo '{}'; } \
-    | jq --arg repo "$REPO" '. + {hasCompletedOnboarding:true, theme:"dark"}
-        | .projects = (.projects // {})
-        | .projects[$repo] = ((.projects[$repo] // {}) + {hasTrustDialogAccepted:true})' \
-    > /tmp/.claude.json 2>/dev/null && mv /tmp/.claude.json "$CJ"
-else
-  printf '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"%s":{"hasTrustDialogAccepted":true}}}\n' "$REPO" > "$CJ"
-fi
-[ "$AGENT_USER" = root ] || chown agent:agent "$CJ"
-
-t "claude.json merged"
 [ -n "$COLS" ] && [ -n "$ROWS" ] && stty -F /dev/hvc0 cols "$COLS" rows "$ROWS" 2>/dev/null
 
 # Shell environment for interactive sessions.
@@ -170,6 +155,14 @@ export LLOK_AGENT="$AGENT_BIN"
 $BROKER_ENV
 PROFILE
 
+# Each agent's first-run setup (marking it signed in with the placeholder,
+# skipping wizards) is prepared by the host for this session and runs as
+# the agent user with the session environment exported.
+if [ -f /run/llok/setup.sh ]; then
+  SETUP='export LLOK_REPO="'"$REPO"'"; . /etc/profile.d/llok.sh 2>/dev/null; sh /run/llok/setup.sh'
+  if [ "$AGENT_USER" = root ]; then sh -c "$SETUP"; else su agent -s /bin/sh -c "$SETUP"; fi
+fi
+t "agent setup done"
 marker "LLOK_INFO rootfs=$ROOTFS_DESC"
 t "ready"
 marker "LLOK_READY uptime=$(cut -d' ' -f1 /proc/uptime)s"

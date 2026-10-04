@@ -95,3 +95,17 @@ func TestEnvScriptQuoting(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestSetupScriptOnlyForStoredProviders(t *testing.T) {
+	a, _ := Resolve("claude-code", nil)
+	s, _ := Prepare(a, func(p string) (Credential, bool) {
+		return Credential{Kind: "apikey", Secret: "k"}, p == "anthropic" || p == "openai"
+	}, "u")
+	sc := s.SetupScript()
+	if !strings.Contains(sc, "# claude-code") || !strings.Contains(sc, "# codex") {
+		t.Errorf("setup for stored providers missing: %s", sc)
+	}
+	if strings.Contains(sc, "# gemini-cli") {
+		t.Error("no google credential, gemini setup must not run")
+	}
+}

@@ -198,6 +198,9 @@ off from the host.`,
 				if err := os.WriteFile(filepath.Join(shareDir, "env.sh"), []byte(session.EnvScript()), 0o644); err != nil {
 					return err
 				}
+				if err := os.WriteFile(filepath.Join(shareDir, "setup.sh"), []byte(session.SetupScript()), 0o644); err != nil {
+					return err
+				}
 			}
 
 			opts := vm.Options{
