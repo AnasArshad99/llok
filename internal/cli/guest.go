@@ -52,6 +52,15 @@ Session VMs boot that disk read-only with no network.`,
 			return nil
 		},
 	}
-	cmd.AddCommand(build, where)
+	var pinOut string
+	pin := &cobra.Command{
+		Use:   "pin",
+		Short: "Maintainers: resolve the latest Alpine release, kernel and agent versions and write versions.yaml",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return guest.Pin(cmd.Context(), pinOut)
+		},
+	}
+	pin.Flags().StringVar(&pinOut, "out", "internal/guest/versions.yaml", "where to write the pins")
+	cmd.AddCommand(build, where, pin)
 	return cmd
 }

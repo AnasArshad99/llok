@@ -5,7 +5,7 @@
 set -euo pipefail
 
 LLOK_HOME=${LLOK_HOME:-$HOME/.llok}
-ALPINE_BRANCH=${ALPINE_BRANCH:-v3.22}
+ALPINE_BRANCH=${LLOK_ALPINE_BRANCH:-${ALPINE_BRANCH:-v3.22}}
 ARCH=aarch64
 MIRROR=${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
 
@@ -20,23 +20,34 @@ fetch() { # url dest
   if [ ! -s "$2" ]; then log "downloading $(basename "$2")"; curl -fsSL -o "$2.part" "$1" && mv "$2.part" "$2"; fi
 }
 
-# Resolve versions.
-fetch "$MIRROR/$ALPINE_BRANCH/releases/$ARCH/latest-releases.yaml" "$CACHE/latest-releases.yaml"
-ROOTFS_FILE=$(awk '/minirootfs/{f=1} f&&/file:/{print $2; exit}' "$CACHE/latest-releases.yaml")
-fetch "$MIRROR/$ALPINE_BRANCH/main/$ARCH/APKINDEX.tar.gz" "$CACHE/APKINDEX.tar.gz"
-KVER=$(tar -xOzf "$CACHE/APKINDEX.tar.gz" APKINDEX 2>/dev/null | awk '/^P:linux-virt$/{f=1} f&&/^V:/{sub("V:","");v=$0;f=0} END{print v}')
-[ -n "$ROOTFS_FILE" ] && [ -n "$KVER" ] || { echo "could not resolve Alpine versions" >&2; exit 1; }
-log "alpine rootfs $ROOTFS_FILE, kernel linux-virt $KVER"
+verify() { # file expected-sha256
+  GOT=$(shasum -a 256 "$1" | cut -d' ' -f1)
+  [ "$GOT" = "$2" ] || { echo "checksum mismatch for $(basename "$1"): got $GOT, pinned $2" >&2; rm -f "$1"; exit 1; }
+  log "$(basename "$1") sha256 verified"
+}
+
+# Inputs are pinned (internal/guest/versions.yaml, exported as LLOK_* by
+# llok). Without pins, which only `llok guest pin` does, resolve latest.
+if [ -n "${LLOK_ROOTFS_FILE:-}" ]; then
+  ROOTFS_FILE=$LLOK_ROOTFS_FILE
+  KAPK=$LLOK_KERNEL_APK
+else
+  fetch "$MIRROR/$ALPINE_BRANCH/releases/$ARCH/latest-releases.yaml" "$CACHE/latest-releases.yaml"
+  ROOTFS_FILE=$(awk '/minirootfs/{f=1} f&&/file:/{print $2; exit}' "$CACHE/latest-releases.yaml")
+  fetch "$MIRROR/$ALPINE_BRANCH/main/$ARCH/APKINDEX.tar.gz" "$CACHE/APKINDEX.tar.gz"
+  KVER=$(tar -xOzf "$CACHE/APKINDEX.tar.gz" APKINDEX 2>/dev/null | awk '/^P:linux-virt$/{f=1} f&&/^V:/{sub("V:","");v=$0;f=0} END{print v}')
+  [ -n "$ROOTFS_FILE" ] && [ -n "$KVER" ] || { echo "could not resolve Alpine versions" >&2; exit 1; }
+  KAPK=linux-virt-$KVER.apk
+fi
+log "alpine rootfs $ROOTFS_FILE, kernel $KAPK"
 
 fetch "$MIRROR/$ALPINE_BRANCH/releases/$ARCH/$ROOTFS_FILE" "$CACHE/$ROOTFS_FILE"
-# latest-releases.yaml publishes the sha256 of each file; refuse a mismatch.
-ROOTFS_SHA=$(awk '/minirootfs/{f=1} f&&/sha256:/{print $2; exit}' "$CACHE/latest-releases.yaml")
-if [ -n "$ROOTFS_SHA" ]; then
-  GOT=$(shasum -a 256 "$CACHE/$ROOTFS_FILE" | cut -d' ' -f1)
-  [ "$GOT" = "$ROOTFS_SHA" ] || { echo "minirootfs checksum mismatch: $GOT != $ROOTFS_SHA" >&2; rm -f "$CACHE/$ROOTFS_FILE"; exit 1; }
-  log "minirootfs sha256 verified"
+fetch "$MIRROR/$ALPINE_BRANCH/main/$ARCH/$KAPK" "$CACHE/$KAPK"
+if [ -n "${LLOK_ROOTFS_SHA256:-}" ]; then
+  verify "$CACHE/$ROOTFS_FILE" "$LLOK_ROOTFS_SHA256"
+  verify "$CACHE/$KAPK" "$LLOK_KERNEL_APK_SHA256"
 fi
-fetch "$MIRROR/$ALPINE_BRANCH/main/$ARCH/linux-virt-$KVER.apk" "$CACHE/linux-virt-$KVER.apk"
+KVER=${KAPK#linux-virt-}; KVER=${KVER%.apk}
 
 # Unpack the kernel package (an apk is a tar.gz with extra headers bsdtar warns about).
 KDIR=$WORK/kernel
@@ -72,7 +83,6 @@ install -m 0755 "$WORK/build-rootfs.sh" "$ROOT/etc/llok/build-rootfs.sh"
 mkdir -p "$ROOT/usr/local/bin"
 install -m 0755 "$WORK/llok-guest" "$ROOT/usr/local/bin/llok-guest"
 echo "$ALPINE_BRANCH" > "$ROOT/etc/llok/alpine-branch"
-echo "${LLOK_CLAUDE_VERSION:-latest}" > "$ROOT/etc/llok/claude-version"
 install -m 0644 "$WORK/agents.list" "$ROOT/etc/llok/agents.list"
 
 # Only the modules we need, decompressed so busybox insmod takes them by path.

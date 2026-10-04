@@ -82,6 +82,18 @@ off from the host.`,
 			if err != nil {
 				return err
 			}
+			// The image must be the one its manifest describes. Quick check
+			// here (kernel and initramfs hashed, root disk size); llok doctor
+			// hashes everything.
+			if os.Getenv("LLOK_SKIP_VERIFY") != "1" {
+				m, err := guest.LoadManifest()
+				if err != nil {
+					return errors.New("the guest image has no manifest; rebuild it with: llok guest build")
+				}
+				if err := m.Verify(true); err != nil {
+					return fmt.Errorf("guest image does not match its manifest (%v); rebuild with: llok guest build", err)
+				}
+			}
 			if err := ensureTrusted(cfg, absRepo); err != nil {
 				return err
 			}

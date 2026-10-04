@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/AnasArshad99/llok/internal/guest"
 )
 
 // Version is injected at build time via -ldflags.
@@ -21,6 +23,7 @@ func Execute() error {
 }
 
 func newRoot() *cobra.Command {
+	guest.LlokVersion = Version
 	up := newUpCmd()
 	root := &cobra.Command{
 		Use:           "llok",

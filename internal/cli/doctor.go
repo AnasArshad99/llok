@@ -54,6 +54,19 @@ func newDoctorCmd() *cobra.Command {
 				fail = true
 			}
 
+			if m, err := guest.LoadManifest(); err != nil {
+				rows = append(rows, warn("no image manifest (rebuild with: llok guest build)"))
+			} else if err := m.Verify(false); err != nil {
+				rows = append(rows, bad("image does not match its manifest: "+err.Error()))
+				fail = true
+			} else {
+				rows = append(rows, ok(fmt.Sprintf("image matches manifest (built %s, alpine %s, %d agents)",
+					m.Built.Local().Format("Jan 2 15:04"), m.Versions.Alpine.Branch, len(m.Agents))))
+				for _, a := range m.Agents {
+					rows = append(rows, styleDim.Render("    "+a))
+				}
+			}
+
 			printBox("llok doctor", strings.Join(rows, "\n"))
 			if fail {
 				return fmt.Errorf("some checks failed")

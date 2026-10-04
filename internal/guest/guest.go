@@ -4,6 +4,7 @@ package guest
 import (
 	"context"
 	_ "embed"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -111,7 +112,19 @@ func BuildRootfs(ctx context.Context) error {
 	defer os.RemoveAll(scratch)
 
 	fmt.Println("llok guest: booting builder VM (NAT network, blank 8 GiB disk)")
+	var agentLines []string
 	res, err := vm.Run(ctx, vm.Options{
+		OnMarker: func(m string) {
+			if rest, ok := strings.CutPrefix(m, "LLOK_AGENTS "); ok {
+				if raw, err := base64.StdEncoding.DecodeString(rest); err == nil {
+					for _, l := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+						if l != "" {
+							agentLines = append(agentLines, l)
+						}
+					}
+				}
+			}
+		},
 		Kernel:   kernel,
 		Initrd:   initrd,
 		Repo:     scratch, // an empty scratch dir; the builder never sees a repo
@@ -135,7 +148,10 @@ func BuildRootfs(ctx context.Context) error {
 	}
 	st, _ := os.Stat(img)
 	fmt.Printf("llok guest: rootfs -> %s (%d GiB sparse, built in %s)\n", img, st.Size()>>30, res.Duration.Round(time.Second))
-	return nil
+	if agentLines == nil {
+		agentLines = []string{}
+	}
+	return recordManifest(agentLines)
 }
 
 // Build runs the embedded build script, which downloads Alpine's kernel and
@@ -162,19 +178,55 @@ func Build(ctx context.Context) error {
 	if err := os.WriteFile(filepath.Join(work, "llok-guest"), guestAgent, 0o755); err != nil {
 		return err
 	}
+	v, err := PinnedVersions()
+	if err != nil {
+		return err
+	}
 	var list strings.Builder
 	for _, a := range agents.Installable() {
-		list.WriteString(a.Name + "|" + a.Binary + "|" + a.Install + "\n")
+		ver, ok := v.Agents[a.Name]
+		if !ok {
+			return fmt.Errorf("no pinned version for agent %s in versions.yaml", a.Name)
+		}
+		list.WriteString(a.Name + "|" + a.Binary + "|" + strings.ReplaceAll(a.Install, "{version}", ver) + "\n")
 	}
 	if err := os.WriteFile(filepath.Join(work, "agents.list"), []byte(list.String()), 0o644); err != nil {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, "/bin/bash", scriptPath)
 	cmd.Dir = work
-	cmd.Env = append(os.Environ(), "LLOK_HOME="+home)
+	cmd.Env = append(append(os.Environ(), "LLOK_HOME="+home), v.env()...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("guest build failed: %w", err)
+	}
+	return recordManifest(nil)
+}
+
+// LlokVersion is set by the CLI so the manifest records which llok built it.
+var LlokVersion = "dev"
+
+// recordManifest hashes the artifacts and writes the manifest, keeping the
+// agents list from the previous manifest when this build did not touch
+// the root disk (agents == nil).
+func recordManifest(agentLines []string) error {
+	v, err := PinnedVersions()
+	if err != nil {
+		return err
+	}
+	if agentLines == nil {
+		if prev, err := LoadManifest(); err == nil {
+			agentLines = prev.Agents
+		}
+	}
+	m, err := WriteManifest(LlokVersion, v, agentLines)
+	if err != nil {
+		return fmt.Errorf("manifest: %w", err)
+	}
+	for _, name := range []string{"Image", "initrd.cpio.gz", "rootfs.img"} {
+		if a, ok := m.Artifacts[name]; ok {
+			fmt.Printf("llok guest: %-15s sha256 %s\n", name, a.SHA256)
+		}
 	}
 	return nil
 }

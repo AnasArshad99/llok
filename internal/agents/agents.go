@@ -40,7 +40,7 @@ type Login struct {
 type Agent struct {
 	Name      string            `yaml:"-"`
 	Binary    string            `yaml:"binary"`
-	Install   string            `yaml:"install"`   // shell line run in the image builder
+	Install   string            `yaml:"install"`   // shell line run in the image builder; {version} is substituted
 	Providers []string          `yaml:"providers"` // first is primary (gets the base URL)
 	Env       map[string]string `yaml:"env,omitempty"`
 	// Setup runs as the unprivileged user at every boot, with the session
@@ -100,7 +100,7 @@ var providers = map[string]Provider{
 var builtin = map[string]Agent{
 	"claude-code": {
 		Binary:    "claude",
-		Install:   "curl -fsSL https://claude.ai/install.sh | bash -s -- ${LLOK_CLAUDE_VERSION:-latest}",
+		Install:   "curl -fsSL https://claude.ai/install.sh | bash -s -- {version}",
 		Providers: []string{"anthropic"},
 		Env: map[string]string{
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
@@ -117,7 +117,7 @@ var builtin = map[string]Agent{
 	},
 	"codex": {
 		Binary:    "codex",
-		Install:   "npm install -g @openai/codex",
+		Install:   "npm install -g @openai/codex@{version}",
 		Providers: []string{"openai"},
 		// Codex only counts itself signed in with an auth file. Seed it in
 		// the mode the user signed in with: an API key, or a ChatGPT login
@@ -139,7 +139,7 @@ fi`,
 	},
 	"gemini-cli": {
 		Binary:    "gemini",
-		Install:   "npm install -g @google/gemini-cli",
+		Install:   "npm install -g @google/gemini-cli@{version}",
 		Providers: []string{"google"},
 		// Skip the auth picker: the key comes from the environment.
 		Setup: `mkdir -p "$HOME/.gemini"

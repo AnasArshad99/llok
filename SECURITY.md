@@ -82,13 +82,18 @@ trusted as data but not as policy.
 
 ### Supply chain
 
-- The guest image is built from Alpine packages. The root filesystem
-  tarball is verified against the checksum Alpine publishes; packages
-  installed inside the builder are verified by `apk`. The kernel package is
-  downloaded and unpacked directly and is not signature-checked yet.
-- Claude Code is installed by Anthropic's installer script fetched over
-  HTTPS. The version can be pinned with `LLOK_CLAUDE_VERSION` at build time,
-  and the installed binary's SHA-256 is recorded in the image.
+- Every input of the guest image is pinned in `internal/guest/versions.yaml`:
+  the Alpine release tarball and kernel package by name and SHA-256, and
+  each agent's exact version. Downloads that do not match are refused.
+  Packages installed inside the builder are verified by `apk`. The kernel
+  package hash was recorded when pinned, not checked against an Alpine
+  signature.
+- Agents are installed by their vendors' installers or npm at the pinned
+  version; each installed binary's SHA-256 is recorded in the image and in
+  the build manifest.
+- The build writes `~/.llok/guest/manifest.json` with the SHA-256 of the
+  kernel, initramfs and root disk. `llok up` checks the image against it
+  before every boot and refuses a mismatch; `llok doctor` reports it.
 - Go dependencies are pinned in `go.sum`.
 
 ## Reporting what you see

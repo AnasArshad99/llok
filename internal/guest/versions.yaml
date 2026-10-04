@@ -1,0 +1,13 @@
+# Pinned inputs of the guest image. Every build uses exactly these, so two
+# builds produce the same image and the published hashes mean something.
+# Update deliberately with: llok guest pin   (then review and commit).
+alpine:
+  branch: v3.22
+  minirootfs: alpine-minirootfs-3.22.6-aarch64.tar.gz
+  minirootfs_sha256: 821565fa8f3953eefd12497b166b4b50add2f7c57fb312e75862f5867e06fefe
+  kernel_apk: linux-virt-6.12.111-r0.apk
+  kernel_apk_sha256: 8fa9b34fa4f55fb8f2066cb4838d43c847eef2160e9b8894b255db69deb4baa7
+agents:
+  claude-code: "2.1.289"
+  codex: "0.160.0"
+  gemini-cli: "0.62.0"

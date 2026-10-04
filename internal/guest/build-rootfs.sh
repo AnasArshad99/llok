@@ -38,7 +38,6 @@ chroot /mnt /usr/sbin/adduser -D -u 1000 -s /bin/bash -h /home/agent agent
 mount -t proc proc /mnt/proc
 mount -t sysfs sys /mnt/sys
 mount --bind /dev /mnt/dev
-export LLOK_CLAUDE_VERSION=$(cat /etc/llok/claude-version 2>/dev/null || echo latest)
 
 # Install every agent llok knows (name|binary|install line), inside the
 # chroot as root, then expose each binary on the default PATH for the agent
@@ -49,7 +48,7 @@ export LLOK_CLAUDE_VERSION=$(cat /etc/llok/claude-version 2>/dev/null || echo la
 while IFS='|' read -r NAME BIN INSTALL <&3; do
   [ -n "$NAME" ] || continue
   log "installing $NAME"
-  if ! chroot /mnt /bin/bash -lc "export LLOK_CLAUDE_VERSION='$LLOK_CLAUDE_VERSION'; $INSTALL" >"/tmp/install-$NAME.log" 2>&1 </dev/null; then
+  if ! chroot /mnt /bin/bash -lc "$INSTALL" >"/tmp/install-$NAME.log" 2>&1 </dev/null; then
     log "$NAME: install failed (continuing without it)"; tail -3 "/tmp/install-$NAME.log"
     echo "$NAME failed" >> /mnt/etc/llok/agents-info
     continue
@@ -74,6 +73,8 @@ umount /mnt/dev /mnt/sys /mnt/proc
 
 AGENTS_OK=$(grep -v 'failed\|unverified' /mnt/etc/llok/agents-info | cut -d' ' -f1 | tr '\n' ' ' | sed 's/ $//')
 echo "alpine $(cat /mnt/etc/alpine-release) · agents: ${AGENTS_OK:-none}" > /mnt/etc/llok/rootfs-info
+# Tell the host what went in, out of band (the host records it in the manifest).
+printf '\033]7777;LLOK_AGENTS %s\033\\' "$(base64 < /mnt/etc/llok/agents-info | tr -d '\n')"
 log "root disk uses $(du -sh /mnt 2>/dev/null | cut -f1)"
 umount /mnt
 sync
