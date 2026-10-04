@@ -48,10 +48,16 @@ cd your-repo
 llok                # first run asks which agent, writes llok.yaml, then boots
 ```
 
-Inside the VM, run the agent you chose: `claude`, `opencode`, `codex`,
-`qwen` or `gemini`. `llok agents` lists them and shows which providers you
-have signed in to. `llok init` writes the policy file without booting;
-`llok init --force` regenerates it.
+Inside the VM, run any agent whose provider you have signed in to:
+`claude`, `opencode`, `codex`, `qwen` or `gemini`. Every session carries
+all your stored providers, so you can use several agents in one VM;
+`agent:` in `llok.yaml` only sets the default, and `llok --agent codex`
+overrides it for one run. `llok agents` lists agents and sign-in state.
+`llok init` writes the policy file without booting; `llok init --force`
+regenerates it.
+
+One limit: Codex and Qwen Code both read `OPENAI_BASE_URL`, so only the
+configured agent of those two is pointed correctly in a given session.
 
 `llok` (or `llok up`) shows the VM console on the left and a live panel on the right: state, repo mapping, VM size, network policy, uptime, and every request the broker allowed or refused.
 
@@ -68,6 +74,7 @@ have signed in to. `llok init` writes the policy file without booting;
 | Command | What it does |
 |---|---|
 | `llok` | Interactive session (same as `llok up`). `exit` powers off, Ctrl-] twice forces it |
+| `llok --agent codex` | Same, set up for a different agent than `llok.yaml` says |
 | `llok up -c 'make test'` | Run one command in the VM, return its exit code |
 | `llok up --plain` | Raw console, no panel |
 | `llok agents` | List agents and which providers are signed in |

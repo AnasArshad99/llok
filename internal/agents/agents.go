@@ -128,7 +128,7 @@ var builtin = map[string]Agent{
 		Install:   "npm install -g @qwen-code/qwen-code",
 		Providers: []string{"dashscope"},
 		Env: map[string]string{
-			"OPENAI_BASE_URL": "http://127.0.0.1:3128/compatible-mode/v1",
+			"OPENAI_BASE_URL": "{broker}/dashscope/compatible-mode/v1",
 			"OPENAI_MODEL":    "qwen3-coder-plus",
 		},
 		Note: "Alibaba's Qwen CLI; DashScope API key",
@@ -238,35 +238,54 @@ type Session struct {
 	Env       map[string]string     // exported in the guest
 }
 
-// Prepare builds the session for agent a given the credentials available.
-// brokerURL is where the guest reaches the broker (http://127.0.0.1:3128).
+// Prepare builds the session for agent a. Every provider the user has a
+// credential for is included (so any agent in the image can be used), but
+// the chosen agent's providers must be satisfied: its primary one is
+// required. brokerURL is where the guest reaches the broker; each provider
+// gets its own path under it so base URLs do not collide.
 func Prepare(a Agent, lookup func(provider string) (Credential, bool), brokerURL string) (Session, error) {
 	s := Session{Agent: a, Creds: map[string]Credential{}, Env: map[string]string{}}
-	for i, pn := range a.Providers {
-		p, ok := providers[pn]
-		if !ok {
-			return s, fmt.Errorf("unknown provider %q", pn)
-		}
+	add := func(p Provider, c Credential) {
 		s.Providers = append(s.Providers, p)
-		c, ok := lookup(pn)
-		if !ok {
-			if i == 0 {
-				return s, fmt.Errorf("agent %s needs a %s credential; run: llok auth %s", a.Name, pn, pn)
-			}
-			continue // optional secondary provider
-		}
-		s.Creds[pn] = c
+		s.Creds[p.Name] = c
 		if c.Kind == "oauth" && p.TokenEnv != "" {
 			s.Env[p.TokenEnv] = PlaceholderToken
 		} else if p.KeyEnv != "" {
 			s.Env[p.KeyEnv] = PlaceholderKey
 		}
-		if i == 0 && p.BaseURLEnv != "" {
-			s.Env[p.BaseURLEnv] = brokerURL
+		if p.BaseURLEnv != "" {
+			s.Env[p.BaseURLEnv] = brokerURL + "/" + p.Name
+		}
+	}
+	// The agent's own providers first (primary required), then any other
+	// provider with a credential so the other agents in the image work too.
+	seen := map[string]bool{}
+	for i, pn := range a.Providers {
+		p, ok := providers[pn]
+		if !ok {
+			return s, fmt.Errorf("unknown provider %q", pn)
+		}
+		c, ok := lookup(pn)
+		if !ok {
+			if i == 0 {
+				return s, fmt.Errorf("agent %s needs a %s credential; run: llok auth %s", a.Name, pn, pn)
+			}
+			continue
+		}
+		add(p, c)
+		seen[pn] = true
+	}
+	for _, pn := range ProviderNames() {
+		if seen[pn] {
+			continue
+		}
+		if c, ok := lookup(pn); ok {
+			add(providers[pn], c)
 		}
 	}
 	for k, v := range a.Env {
-		s.Env[k] = v // agent-specific values win (e.g. a base URL with a path)
+		// Agent-specific values win, e.g. a base URL that needs a path.
+		s.Env[k] = strings.ReplaceAll(v, "{broker}", brokerURL)
 	}
 	return s, nil
 }
@@ -280,9 +299,9 @@ func (s Session) Hosts() []string {
 	return out
 }
 
-// Primary is the provider whose API the agent's base URL points at.
+// Primary is the configured agent's main provider, if it has one.
 func (s Session) Primary() (Provider, bool) {
-	if len(s.Providers) == 0 {
+	if len(s.Providers) == 0 || len(s.Agent.Providers) == 0 {
 		return Provider{}, false
 	}
 	return s.Providers[0], true

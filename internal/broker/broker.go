@@ -96,7 +96,7 @@ type Broker struct {
 	audit   *os.File
 	auditMu sync.Mutex
 	tr      *http.Transport
-	api     *httputil.ReverseProxy
+	base    map[string]*httputil.ReverseProxy // by provider name
 	fwd     *httputil.ReverseProxy
 	srv     *http.Server
 
@@ -130,14 +130,23 @@ func New(project string, pol Policy, routes []Route, auditPath string) (*Broker,
 	}
 	b.tr = tr
 	b.hostPx = map[string]*httputil.ReverseProxy{}
-	if len(routes) > 0 && routes[0].Upstream != nil {
-		primary := routes[0]
-		b.api = &httputil.ReverseProxy{
+	// Origin-form requests (the agent's base URL points at us) carry the
+	// provider as the first path element: /anthropic/v1/messages. One
+	// proxy per route strips that prefix and injects the credential.
+	b.base = map[string]*httputil.ReverseProxy{}
+	for _, rt := range routes {
+		if rt.Upstream == nil {
+			continue
+		}
+		rt := rt
+		b.base[rt.Name] = &httputil.ReverseProxy{
 			Rewrite: func(pr *httputil.ProxyRequest) {
-				pr.SetURL(primary.Upstream)
-				pr.Out.Host = primary.Upstream.Host
+				pr.SetURL(rt.Upstream)
+				pr.Out.URL.Path = strings.TrimPrefix(pr.In.URL.Path, "/"+rt.Name)
+				pr.Out.URL.RawPath = ""
+				pr.Out.Host = rt.Upstream.Host
 				pr.Out.Header.Del("X-Forwarded-For")
-				b.inject(pr.Out.Header, primary, true)
+				b.inject(pr.Out.Header, rt, true)
 			},
 			Transport:     tr,
 			FlushInterval: -1, // stream SSE tokens as they arrive
@@ -201,6 +210,15 @@ func (b *Broker) inject(h http.Header, r Route, force bool) bool {
 		h.Set(name, value)
 	}
 	return true
+}
+
+func (b *Broker) routeByName(name string) (Route, bool) {
+	for _, r := range b.Routes {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return Route{}, false
 }
 
 // route finds the provider route for a host.
@@ -290,16 +308,26 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		b.emit(ev, start)
 
 	default:
-		// Origin-form: the agent talking to its primary provider through us.
-		if b.api == nil {
+		// Origin-form: the agent talking to a provider through its base URL,
+		// which names the provider in the first path element.
+		name, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		px, ok := b.base[name]
+		if !ok && len(b.Routes) > 0 {
+			// No prefix: fall back to the primary provider (older agents).
+			name = b.Routes[0].Name
+			px, ok = b.base[name]
+			r.URL.Path = "/" + name + r.URL.Path
+		}
+		if !ok {
 			ev.Kind, ev.Decision = "api", "deny"
-			b.deny(w, "(no primary provider for this agent)")
+			b.deny(w, "(no provider for "+r.URL.Path+")")
 			b.emit(ev, start)
 			return
 		}
-		ev.Kind, ev.Host, ev.Path, ev.Decision = "api", b.Routes[0].Upstream.Host, r.URL.Path, "allow"
+		rt, _ := b.routeByName(name)
+		ev.Kind, ev.Host, ev.Path, ev.Decision = "api", rt.Upstream.Host, strings.TrimPrefix(r.URL.Path, "/"+name), "allow"
 		rec := &statusRecorder{ResponseWriter: w}
-		b.api.ServeHTTP(rec, r)
+		px.ServeHTTP(rec, r)
 		ev.Status = rec.status
 		b.emit(ev, start)
 	}

@@ -37,6 +37,7 @@ func newUpCmd() *cobra.Command {
 		plain   bool
 		verbose bool
 		devNAT  bool
+		agentFl string
 	)
 	cmd := &cobra.Command{
 		Use:   "up",
@@ -111,7 +112,11 @@ off from the host.`,
 
 			rootfs, hasRootfs := guest.RootfsPath()
 
-			// Which agent this session is for, and what it needs.
+			// Which agent this session is for, and what it needs. --agent
+			// overrides llok.yaml for this run only.
+			if agentFl != "" {
+				cfg.Agent = agentFl
+			}
 			agent, err := cfg.ResolveAgent()
 			if err != nil {
 				return err
@@ -158,9 +163,7 @@ off from the host.`,
 					} else {
 						r.Header, r.Format = p.KeyHeader, p.KeyFormat
 					}
-					if len(routes) == 0 {
-						r.Upstream, _ = url.Parse(p.Upstream)
-					}
+					r.Upstream, _ = url.Parse(p.Upstream)
 					routes = append(routes, r)
 				}
 				home, _ := guest.Home()
@@ -359,6 +362,7 @@ off from the host.`,
 	cmd.Flags().Uint64Var(&memMB, "mem", 0, "memory in MiB (default from llok.yaml)")
 	cmd.Flags().StringVar(&repo, "repo", ".", "repo directory to mount inside the VM")
 	cmd.Flags().BoolVar(&plain, "plain", false, "no full-screen UI; raw console in the current terminal")
+	cmd.Flags().StringVar(&agentFl, "agent", "", "agent to set this session up for (overrides llok.yaml)")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print the boot summary and run summary")
 	cmd.Flags().BoolVar(&devNAT, "dev-nat", false, "DEVELOPMENT ONLY: attach a NAT network device")
 	_ = cmd.Flags().MarkHidden("dev-nat")

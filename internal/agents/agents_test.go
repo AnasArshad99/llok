@@ -16,7 +16,7 @@ func TestPrepareClaudeOAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Env["CLAUDE_CODE_OAUTH_TOKEN"] != PlaceholderToken || s.Env["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:3128" {
+	if s.Env["CLAUDE_CODE_OAUTH_TOKEN"] != PlaceholderToken || s.Env["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:3128/anthropic" {
 		t.Errorf("env = %v", s.Env)
 	}
 	if _, has := s.Env["ANTHROPIC_API_KEY"]; has {
@@ -49,8 +49,29 @@ func TestPrepareOptionalSecondary(t *testing.T) {
 	if _, has := s.Env["OPENAI_API_KEY"]; has {
 		t.Error("provider without a credential must not get a placeholder")
 	}
-	if len(s.Hosts()) < 4 {
-		t.Errorf("all providers' hosts should be listed: %v", s.Hosts())
+	if len(s.Hosts()) != 3 {
+		t.Errorf("only providers with credentials are routed: %v", s.Hosts())
+	}
+}
+
+func TestPrepareIncludesOtherStoredProviders(t *testing.T) {
+	a, _ := Resolve("claude-code", nil)
+	s, err := Prepare(a, func(p string) (Credential, bool) {
+		return Credential{Kind: "apikey", Secret: "k"}, p == "anthropic" || p == "openai"
+	}, "http://b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Providers[0].Name != "anthropic" {
+		t.Errorf("the agent's own provider must come first, got %s", s.Providers[0].Name)
+	}
+	if s.Env["OPENAI_API_KEY"] != PlaceholderKey || s.Env["OPENAI_BASE_URL"] != "http://b/openai" {
+		t.Errorf("other stored providers should be usable: %v", s.Env)
+	}
+	q, _ := Resolve("qwen-code", nil)
+	qs, _ := Prepare(q, func(p string) (Credential, bool) { return Credential{Kind: "apikey", Secret: "k"}, true }, "http://b")
+	if qs.Env["OPENAI_BASE_URL"] != "http://b/dashscope/compatible-mode/v1" {
+		t.Errorf("agent env should win and expand {broker}: %v", qs.Env["OPENAI_BASE_URL"])
 	}
 }
 
