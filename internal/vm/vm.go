@@ -29,7 +29,7 @@ type Options struct {
 
 	HideBanner   bool                          // suppress the in-guest banner (the host UI shows it instead)
 	Broker       bool                          // tell the guest to start the vsock forwarder and use the broker
-	CredKind     string                        // "apikey" or "oauth": which placeholder env var the guest sets
+	AgentBinary  string                        // name of the agent's binary, shown to the user in the guest
 	ShareDir     string                        // host dir exposed read-only at /run/llok (CA cert etc.)
 	Vsock        map[uint32]func(net.Listener) // host vsock services (broker, control)
 	OnStart      func(Machine)                 // called once the VM is running
@@ -134,7 +134,10 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		cmdline += " llok.banner=0"
 	}
 	if o.Broker {
-		cmdline += " llok.broker=1 llok.cred=" + o.CredKind
+		cmdline += " llok.broker=1"
+	}
+	if o.AgentBinary != "" {
+		cmdline += " llok.agent=" + o.AgentBinary
 	}
 	stdinFD := int(os.Stdin.Fd())
 	cols, rows := o.Cols, o.Rows

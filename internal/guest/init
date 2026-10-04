@@ -44,7 +44,8 @@ REPO=$(cmdline_val llok.repo); REPO=${REPO:-/repo}
 NAME=$(b64_val llok.name); NAME=${NAME:-project}
 COLS=$(cmdline_val llok.cols); ROWS=$(cmdline_val llok.rows)
 BANNER=$(cmdline_val llok.banner)
-BROKER=$(cmdline_val llok.broker); CRED=$(cmdline_val llok.cred)
+BROKER=$(cmdline_val llok.broker)
+AGENT_BIN=$(cmdline_val llok.agent)
 ROOT=$(cmdline_val llok.root)
 
 # ---- build mode: install the rootfs onto /dev/vda (network allowed) --------
@@ -111,15 +112,7 @@ if [ "$BROKER" = 1 ] && command -v llok-guest >/dev/null 2>&1; then
   llok-guest proxy >/dev/null 2>&1 &
   BROKER_ENV='export HTTP_PROXY=http://127.0.0.1:3128 HTTPS_PROXY=http://127.0.0.1:3128
 export http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY
-export NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost
-export ANTHROPIC_BASE_URL=http://127.0.0.1:3128
-export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1'
-  case "$CRED" in
-    oauth)  BROKER_ENV="$BROKER_ENV
-export CLAUDE_CODE_OAUTH_TOKEN=llok-placeholder-token" ;;
-    *)      BROKER_ENV="$BROKER_ENV
-export ANTHROPIC_API_KEY=sk-ant-llok-placeholder" ;;
-  esac
+export NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost'
   NET_DESC="broker"
   # Trust the llok CA so the broker can terminate TLS for provider hosts.
   if [ -f /run/llok/ca.pem ]; then
@@ -129,6 +122,12 @@ export NODE_EXTRA_CA_CERTS=/run/llok/ca.pem SSL_CERT_FILE=/etc/ssl/certs/ca-cert
   fi
 else
   NET_DESC="none"
+fi
+# The agent's environment (placeholder credentials, base URL at the broker,
+# agent-specific settings) is prepared by the host for this session.
+if [ -f /run/llok/env.sh ]; then
+  BROKER_ENV="$BROKER_ENV
+$(cat /run/llok/env.sh)"
 fi
 t "broker set up"
 # The session runs as the unprivileged "agent" user when the root disk
@@ -167,6 +166,7 @@ export LLOK_VM=1
 export LLOK_PROJECT="$NAME"
 export PS1='\[\e[1;35m\]llok\[\e[0m\]\[\e[2m\]@$NAME\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\] \[\e[1;35m\]\$\[\e[0m\] '
 alias ll='ls -la'
+export LLOK_AGENT="$AGENT_BIN"
 $BROKER_ENV
 PROFILE
 

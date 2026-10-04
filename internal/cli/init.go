@@ -68,10 +68,7 @@ func runInitForm(cfg *config.Config) error {
 	if cfg.Name, err = inputPrompt("Project name", "Shown in the VM prompt and logs.", cfg.Name); err != nil {
 		return err
 	}
-	if cfg.Agent, err = selectPrompt("Agent", "Which coding agent will run inside the VM.", []option[string]{
-		{"Claude Code", "claude-code"},
-		{"Shell only (no agent yet)", "shell"},
-	}, 0); err != nil {
+	if cfg.Agent, err = agentPicker(cfg.Agent); err != nil {
 		return err
 	}
 	if cfg.VM.CPUs, err = selectPrompt("vCPUs", "", []option[uint]{

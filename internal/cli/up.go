@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/AnasArshad99/llok/internal/agents"
 	"github.com/AnasArshad99/llok/internal/broker"
 	"github.com/AnasArshad99/llok/internal/config"
 	"github.com/AnasArshad99/llok/internal/control"
@@ -82,7 +84,7 @@ off from the host.`,
 			if err := ensureTrusted(cfg, absRepo); err != nil {
 				return err
 			}
-			if cfg.Network.Mode == "none" && cfg.Agent != "shell" {
+			if cfg.Network.Mode == "none" && cfg.Agent != "shell" && cfg.Agent != "" {
 				fmt.Fprintln(os.Stderr, warn("network.mode is none: the agent cannot reach its provider and will fail to sign in."))
 				fmt.Fprintln(os.Stderr, styleDim.Render("  set  network: mode: broker  in "+config.FileName+" (or run: llok init --force), then: llok auth status"))
 			}
@@ -109,38 +111,88 @@ off from the host.`,
 
 			rootfs, hasRootfs := guest.RootfsPath()
 
-			// The broker: only way out of the VM. Needs a stored credential.
+			// Which agent this session is for, and what it needs.
+			agent, err := cfg.ResolveAgent()
+			if err != nil {
+				return err
+			}
+			if agent.Name == "shell" && command == "" && isTTY() && cfg.Agent == "" {
+				if name, err := agentPicker("claude-code"); err == nil {
+					agent, _ = agents.Resolve(name, cfg.Agents)
+				}
+			}
+
+			// The broker: only way out of the VM. Needs credentials for the
+			// agent's providers (at least the primary one).
 			var brk *broker.Broker
 			var shareDir string
+			var session agents.Session
 			if cfg.Network.Mode == "broker" {
-				cred, err := creds.Get("anthropic")
-				if errors.Is(err, creds.ErrNotFound) {
-					return fmt.Errorf("network.mode is broker but no Claude credential is stored; run: llok auth claude  (or set network.mode: none)")
+				var lookupErr error
+				session, err = agents.Prepare(agent, func(p string) (agents.Credential, bool) {
+					c, err := creds.Get(p)
+					if errors.Is(err, creds.ErrNotFound) {
+						return agents.Credential{}, false
+					}
+					if err != nil {
+						lookupErr = err
+						return agents.Credential{}, false
+					}
+					return agents.Credential{Kind: c.Kind, Secret: c.Secret}, true
+				}, "http://127.0.0.1:3128")
+				if lookupErr != nil {
+					return lookupErr
 				}
 				if err != nil {
-					return err
+					return fmt.Errorf("%w  (or set network.mode: none)", err)
+				}
+				var routes []broker.Route
+				for _, p := range session.Providers {
+					c, ok := session.Creds[p.Name]
+					if !ok {
+						continue
+					}
+					r := broker.Route{Name: p.Name, Hosts: p.Hosts, Cred: broker.Credential{Kind: c.Kind, Secret: c.Secret}}
+					if c.Kind == "oauth" && p.TokenHeader != "" {
+						r.Header, r.Format = p.TokenHeader, p.TokenFormat
+					} else {
+						r.Header, r.Format = p.KeyHeader, p.KeyFormat
+					}
+					if len(routes) == 0 {
+						r.Upstream, _ = url.Parse(p.Upstream)
+					}
+					routes = append(routes, r)
 				}
 				home, _ := guest.Home()
 				os.MkdirAll(filepath.Join(home, "audit"), 0o700)
-				brk, err = broker.New(cfg.Name, broker.Policy{Allow: cfg.Network.Allow},
-					broker.Credential{Kind: cred.Kind, Secret: cred.Secret},
+				brk, err = broker.New(cfg.Name, broker.Policy{Allow: cfg.Network.Allow}, routes,
 					filepath.Join(home, "audit", "broker.jsonl"))
 				if err != nil {
 					return err
 				}
 				defer brk.Close()
-				// The guest trusts llok's CA so TLS to Anthropic's hosts can be
+				// The guest trusts llok's CA so TLS to provider hosts can be
 				// terminated here for credential injection.
 				ca, err := broker.LoadOrCreateCA(filepath.Join(home, "ca"))
 				if err != nil {
 					return fmt.Errorf("broker CA: %w", err)
 				}
 				brk.CA = ca
-				shareDir = filepath.Join(home, "share")
-				if err := os.MkdirAll(shareDir, 0o755); err != nil {
+				// A per-session read-only share carries the CA and the agent's
+				// environment (placeholders only, never real secrets).
+				shareDir, err = os.MkdirTemp(filepath.Join(home, "share"), "session-")
+				if err != nil {
+					os.MkdirAll(filepath.Join(home, "share"), 0o755)
+					shareDir, err = os.MkdirTemp(filepath.Join(home, "share"), "session-")
+					if err != nil {
+						return err
+					}
+				}
+				defer os.RemoveAll(shareDir)
+				if err := os.WriteFile(filepath.Join(shareDir, "ca.pem"), ca.PEM, 0o644); err != nil {
 					return err
 				}
-				if err := os.WriteFile(filepath.Join(shareDir, "ca.pem"), ca.PEM, 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(shareDir, "env.sh"), []byte(session.EnvScript()), 0o644); err != nil {
 					return err
 				}
 			}
@@ -213,24 +265,32 @@ off from the host.`,
 				control.Port: ctl.Serve,
 			}
 			opts.GracefulStop = func() bool { return ctl.Shutdown() == nil }
+			opts.AgentBinary = agent.Binary
 			if brk != nil {
 				opts.ShareDir = shareDir
 				opts.Broker = true
-				opts.CredKind = brk.Cred.Kind
 				opts.Vsock[3128] = func(l net.Listener) { brk.Serve(l) }
 			}
 
 			var sess *ui.Session
 			if useUI {
+				var provNames []string
+				for _, p := range session.Providers {
+					if _, ok := session.Creds[p.Name]; ok {
+						provNames = append(provNames, p.Name)
+					}
+				}
 				sess = ui.New(ui.Info{
-					Network:  cfg.Network.Mode,
-					Allow:    len(cfg.Network.Allow),
-					Project:  cfg.Name,
-					RepoHost: absRepo,
-					RepoVM:   cfg.Mount.Repo,
-					CPUs:     cpus,
-					MemoryMB: memMB,
-					Kernel:   guest.KernelVersion(),
+					Agent:     agent.Name,
+					Providers: provNames,
+					Network:   cfg.Network.Mode,
+					Allow:     len(cfg.Network.Allow),
+					Project:   cfg.Name,
+					RepoHost:  absRepo,
+					RepoVM:    cfg.Mount.Repo,
+					CPUs:      cpus,
+					MemoryMB:  memMB,
+					Kernel:    guest.KernelVersion(),
 				})
 				opts.Cols, opts.Rows = sess.ConsoleSize()
 				opts.Output = sess

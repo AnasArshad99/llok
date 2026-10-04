@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Run coding agents inside locked microVMs.</b><br>
-  Your repo goes in. One audited channel comes out. Nothing else.
+  Claude Code, opencode, Codex, Qwen Code, Gemini CLI. Your repo goes in. One audited channel comes out. Nothing else.
 </p>
 
 <p align="center">
@@ -43,13 +43,15 @@ Requires an Apple silicon Mac on macOS 26 or newer, Go 1.26, and the Xcode comma
 ## Use
 
 ```bash
-llok auth claude    # sign in once; the token goes to your Keychain, never the VM
+llok auth anthropic # sign in once; the token goes to your Keychain, never the VM
 cd your-repo
-llok                # first run asks a few questions and writes llok.yaml, then boots
+llok                # first run asks which agent, writes llok.yaml, then boots
 ```
 
-Inside the VM, run `claude`. `llok init` writes the policy file without
-booting; `llok init --force` regenerates it.
+Inside the VM, run the agent you chose: `claude`, `opencode`, `codex`,
+`qwen` or `gemini`. `llok agents` lists them and shows which providers you
+have signed in to. `llok init` writes the policy file without booting;
+`llok init --force` regenerates it.
 
 `llok` (or `llok up`) shows the VM console on the left and a live panel on the right: state, repo mapping, VM size, network policy, uptime, and every request the broker allowed or refused.
 
@@ -68,16 +70,18 @@ booting; `llok init --force` regenerates it.
 | `llok` | Interactive session (same as `llok up`). `exit` powers off, Ctrl-] twice forces it |
 | `llok up -c 'make test'` | Run one command in the VM, return its exit code |
 | `llok up --plain` | Raw console, no panel |
-| `llok auth claude` | Store your Claude login. `--api-key` stores a key instead |
+| `llok agents` | List agents and which providers are signed in |
+| `llok auth <provider>` | Store a credential: `anthropic` (subscription login or key), `openai`, `google`, `dashscope` (keys) |
 | `llok doctor` | Check hypervisor support, code signing, guest image |
 | `llok guest build` | Rebuild the VM image (for a newer agent version) |
 
 ## Policy
 
-`llok init` writes a `llok.yaml` next to your code. It is the whole policy.
+`llok init` writes a `llok.yaml` next to your code. It is the only file you
+ever edit.
 
 ```yaml
-agent: claude-code
+agent: claude-code          # or opencode, codex, qwen-code, gemini-cli, shell
 vm:
   cpus: 2
   memory_mb: 1024
@@ -138,6 +142,17 @@ rules:
     message: lockfile changed
 ```
 
+An agent llok does not know can be described inline, still in the same file:
+
+```yaml
+agent: my-tool
+agents:
+  my-tool:
+    binary: mytool
+    install: pip install mytool     # run when the image is built
+    providers: [openai]             # which API it talks to; keys via llok auth
+```
+
 Because `llok.yaml` travels with the repo, a policy that adds allowed hosts
 or changes rules must be approved once per repo (`llok up` asks, or run
 `llok trust`). Any later change to those parts asks again.
@@ -149,9 +164,9 @@ under `~/.llok/sessions/<project>/`.
 ## How it works
 
 - **Hypervisor.** Apple's Virtualization framework, driven from Go. Boot to a ready shell takes about 0.2 seconds.
-- **Guest.** Alpine's `linux-virt` kernel, a 6 MB initramfs with llok's init, and an ext4 root disk holding bash, git, Node, ripgrep and the agent. Sessions mount the disk read-only with a tmpfs overlay.
+- **Guest.** Alpine's `linux-virt` kernel, a 6 MB initramfs with llok's init, and an ext4 root disk holding bash, git, Node, ripgrep and every built-in agent. Sessions mount the disk read-only with a tmpfs overlay and run as an unprivileged user.
 - **Image build.** `llok guest build` boots a one-off builder VM with NAT to install packages. It is the only VM that ever gets a network device, and it never sees a repo.
-- **Broker.** A small agent inside the guest forwards `127.0.0.1:3128` over vsock to llok on the host. Provider API calls are reverse-proxied with the real credential; TLS to the provider's hosts is terminated with a local CA the guest trusts, so injection works there too. Other allowed hosts get a plain tunnel with nothing injected.
+- **Broker.** A small agent inside the guest forwards `127.0.0.1:3128` over vsock to llok on the host. Each provider the chosen agent uses is a route: its hosts are terminated with a local CA the guest trusts and the real credential is injected in the header that provider expects. Other allowed hosts get a plain tunnel with nothing injected.
 - **Control channel.** A second vsock port carries resize and shutdown, so window changes reach the agent's UI and Ctrl-] powers the guest off cleanly.
 - **Supervisor.** A file watcher on the repo (macOS FSEvents) and the broker's decisions feed an indexed rules engine on the host, which can pause or stop the VM through the Virtualization framework.
 

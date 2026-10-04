@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AnasArshad99/llok/internal/agents"
 	"github.com/AnasArshad99/llok/internal/vm"
 )
 
@@ -85,7 +86,7 @@ func RootfsPath() (string, bool) {
 }
 
 // BuildRootfs boots a builder VM (the only VM that gets a network device)
-// which installs Alpine, the toolchain and Claude Code onto a fresh disk.
+// which installs Alpine, the toolchain and every known agent onto a fresh disk.
 func BuildRootfs(ctx context.Context) error {
 	kernel, initrd, err := Paths()
 	if err != nil {
@@ -159,6 +160,13 @@ func Build(ctx context.Context) error {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(work, "llok-guest"), guestAgent, 0o755); err != nil {
+		return err
+	}
+	var list strings.Builder
+	for _, a := range agents.Installable() {
+		list.WriteString(a.Name + "|" + a.Binary + "|" + a.Install + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(work, "agents.list"), []byte(list.String()), 0o644); err != nil {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, "/bin/bash", scriptPath)

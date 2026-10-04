@@ -9,6 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/AnasArshad99/llok/internal/agents"
 	"github.com/AnasArshad99/llok/internal/guard"
 )
 
@@ -33,6 +34,17 @@ type Config struct {
 	} `yaml:"network"`
 	// Rules override or extend the built-in supervisor rules (see guard.Defaults).
 	Rules []guard.Rule `yaml:"rules"`
+	// Agents optionally defines extra agents inline, keyed by name.
+	Agents map[string]agents.Agent `yaml:"agents,omitempty"`
+}
+
+// ResolveAgent returns the agent this repo is configured for.
+func (c *Config) ResolveAgent() (agents.Agent, error) {
+	name := c.Agent
+	if name == "" {
+		name = "shell"
+	}
+	return agents.Resolve(name, c.Agents)
 }
 
 // GuardRules returns the effective supervisor rule set.
@@ -56,7 +68,8 @@ func (c *Config) Render() []byte {
 version: %d
 name: %s
 
-# Which coding agent runs inside the VM (claude-code | shell).
+# Which coding agent the VM is set up for. Built in: claude-code, opencode,
+# codex, qwen-code, gemini-cli, shell. (llok agents lists them.)
 agent: %s
 
 vm:
@@ -114,6 +127,17 @@ func Load(dir string) (*Config, error) {
 	}
 	if err := guard.Validate(c.GuardRules()); err != nil {
 		return nil, fmt.Errorf("%s: rules: %w", FileName, err)
+	}
+	for name, a := range c.Agents {
+		a.Name = name
+		if err := agents.Validate(a); err != nil {
+			return nil, fmt.Errorf("%s: agents: %w", FileName, err)
+		}
+	}
+	if c.Agent != "" {
+		if _, err := c.ResolveAgent(); err != nil {
+			return nil, fmt.Errorf("%s: %w", FileName, err)
+		}
 	}
 	return c, nil
 }

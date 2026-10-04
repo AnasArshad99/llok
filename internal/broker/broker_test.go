@@ -3,13 +3,26 @@ package broker
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
 
+func testRoutes(kind string) []Route {
+	r := Route{Name: "anthropic", Hosts: []string{"api.anthropic.com", "platform.claude.com"},
+		Upstream: &url.URL{Scheme: "https", Host: "api.anthropic.com"},
+		Cred:     Credential{Kind: kind, Secret: "REAL-SECRET"}}
+	if kind == "oauth" {
+		r.Header, r.Format = "Authorization", "Bearer {secret}"
+	} else {
+		r.Header, r.Format = "X-Api-Key", "{secret}"
+	}
+	return []Route{r}
+}
+
 func newTestBroker(t *testing.T, kind string, allow ...string) *Broker {
 	t.Helper()
-	b, err := New("test", Policy{Allow: allow}, Credential{Kind: kind, Secret: "REAL-SECRET"}, "")
+	b, err := New("test", Policy{Allow: allow}, testRoutes(kind), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,8 +54,8 @@ func TestInjectSwapsPlaceholderOnly(t *testing.T) {
 	b := newTestBroker(t, "oauth")
 
 	h := http.Header{}
-	h.Set("Authorization", "Bearer "+PlaceholderOAuth)
-	if !b.inject(h, false) {
+	h.Set("Authorization", "Bearer llok-placeholder-token")
+	if !b.inject(h, b.Routes[0], false) {
 		t.Fatal("placeholder bearer should be injected")
 	}
 	if got := h.Get("Authorization"); got != "Bearer REAL-SECRET" {
@@ -55,7 +68,7 @@ func TestInjectSwapsPlaceholderOnly(t *testing.T) {
 	// A request without the placeholder is left alone on the intercept path.
 	h = http.Header{}
 	h.Set("Authorization", "Bearer someone-elses-token")
-	if b.inject(h, false) {
+	if b.inject(h, b.Routes[0], false) {
 		t.Error("foreign credential must not be replaced")
 	}
 	if h.Get("Authorization") != "Bearer someone-elses-token" {
@@ -64,7 +77,7 @@ func TestInjectSwapsPlaceholderOnly(t *testing.T) {
 
 	// The agent's own API base route always injects.
 	h = http.Header{}
-	if !b.inject(h, true) || h.Get("Authorization") != "Bearer REAL-SECRET" {
+	if !b.inject(h, b.Routes[0], true) || h.Get("Authorization") != "Bearer REAL-SECRET" {
 		t.Error("forced inject should set the credential")
 	}
 }
@@ -72,9 +85,9 @@ func TestInjectSwapsPlaceholderOnly(t *testing.T) {
 func TestInjectAPIKeyKind(t *testing.T) {
 	b := newTestBroker(t, "apikey")
 	h := http.Header{}
-	h.Set("X-Api-Key", PlaceholderAPIKey)
-	h.Set("Authorization", "Bearer "+PlaceholderOAuth) // both placeholders present
-	if !b.inject(h, false) {
+	h.Set("X-Api-Key", "llok-placeholder-key")
+	h.Set("Authorization", "Bearer llok-placeholder-token") // both placeholders present
+	if !b.inject(h, b.Routes[0], false) {
 		t.Fatal("expected injection")
 	}
 	if h.Get("X-Api-Key") != "REAL-SECRET" || h.Get("Authorization") != "" {

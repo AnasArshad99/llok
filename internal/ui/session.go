@@ -22,14 +22,16 @@ import (
 
 // Info is the static information shown in the panel.
 type Info struct {
-	Network  string // "none" or "broker"
-	Allow    int    // extra allowed hosts
-	Project  string
-	RepoHost string
-	RepoVM   string
-	CPUs     uint
-	MemoryMB uint64
-	Kernel   string
+	Agent     string   // agent name shown in the panel
+	Providers []string // providers with credentials for this session
+	Network   string   // "none" or "broker"
+	Allow     int      // extra allowed hosts
+	Project   string
+	RepoHost  string
+	RepoVM    string
+	CPUs      uint
+	MemoryMB  uint64
+	Kernel    string
 }
 
 // Session owns the terminal while the VM runs.
@@ -491,6 +493,7 @@ func (s *Session) panelLines() []string {
 	lines = append(lines,
 		sep,
 		kv("project", s.info.Project),
+		kv("agent", s.info.Agent),
 		kv("repo", shortPath(s.info.RepoHost, s.panelW-11)),
 		kv("mount", s.info.RepoVM+sDim.Render(" rw")),
 		kv("vm", fmt.Sprintf("%d vCPU · %s", s.info.CPUs, mem)),
@@ -524,7 +527,10 @@ func (s *Session) networkDesc() string {
 	if s.info.Network != "broker" {
 		return sWarn.Render("none") + sDim.Render(" · agent cannot sign in")
 	}
-	d := sAccent.Render("broker") + sDim.Render(" · api.anthropic.com")
+	d := sAccent.Render("broker")
+	if len(s.info.Providers) > 0 {
+		d += sDim.Render(" · " + strings.Join(s.info.Providers, ", "))
+	}
 	if s.info.Allow > 0 {
 		d += sDim.Render(fmt.Sprintf(" +%d", s.info.Allow))
 	}

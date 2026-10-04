@@ -35,35 +35,45 @@ cp /etc/resolv.conf /mnt/etc/resolv.conf
 # agent so a compromised coding agent cannot tamper with it.
 chroot /mnt /usr/sbin/adduser -D -u 1000 -s /bin/bash -h /home/agent agent
 
-CLAUDE_WANT=$(cat /etc/llok/claude-version 2>/dev/null || echo latest)
-log "installing Claude Code ($CLAUDE_WANT)"
 mount -t proc proc /mnt/proc
 mount -t sysfs sys /mnt/sys
 mount --bind /dev /mnt/dev
-if ! chroot /mnt /bin/bash -lc "curl -fsSL https://claude.ai/install.sh | bash -s -- $CLAUDE_WANT" >/tmp/claude-install.log 2>&1; then
-  log "native installer failed, falling back to npm"; tail -5 /tmp/claude-install.log
-  chroot /mnt /bin/bash -lc 'npm install -g @anthropic-ai/claude-code' >/tmp/claude-install.log 2>&1 \
-    || { tail -20 /tmp/claude-install.log; exit 3; }
-fi
-# The native installer puts the binary under /root, unreachable by the agent
-# user. Copy the real file (following symlinks inside the chroot) onto the
-# default PATH, root-owned and world-executable but not writable.
-mkdir -p /mnt/usr/local/bin
-# (-L: the installer's link has an absolute target that only resolves inside
-# the chroot, so test and copy from inside it.)
-if [ -L /mnt/root/.local/bin/claude ] || [ -e /mnt/root/.local/bin/claude ]; then
-  chroot /mnt /bin/sh -c 'cp -L /root/.local/bin/claude /usr/local/bin/claude.new && mv /usr/local/bin/claude.new /usr/local/bin/claude'
-  chmod 0755 /mnt/usr/local/bin/claude
-fi
-[ -x /mnt/usr/local/bin/claude ] || { echo "llok build: /usr/local/bin/claude missing after install" >&2; ls -la /mnt/root/.local/bin/ >&2; exit 4; }
-CLAUDE_VER=$(chroot /mnt /bin/sh -c 'su agent -s /bin/sh -c "claude --version"' 2>&1 | head -1 | tr -d '\r')
-[ -n "$CLAUDE_VER" ] || { echo "llok build: claude not runnable as the agent user" >&2; tail -20 /tmp/claude-install.log; exit 4; }
-CLAUDE_SHA=$(sha256sum /mnt/usr/local/bin/claude 2>/dev/null | cut -c1-16)
-log "claude code: $CLAUDE_VER (sha256 $CLAUDE_SHA…)"
+export LLOK_CLAUDE_VERSION=$(cat /etc/llok/claude-version 2>/dev/null || echo latest)
+
+# Install every agent llok knows (name|binary|install line), inside the
+# chroot as root, then expose each binary on the default PATH for the agent
+# user: installers tend to drop files under /root.
+: > /mnt/etc/llok/agents-info
+# (Every command in the loop gets </dev/null: installers like npm read
+# stdin, which would otherwise be the agent list itself.)
+while IFS='|' read -r NAME BIN INSTALL <&3; do
+  [ -n "$NAME" ] || continue
+  log "installing $NAME"
+  if ! chroot /mnt /bin/bash -lc "export LLOK_CLAUDE_VERSION='$LLOK_CLAUDE_VERSION'; $INSTALL" >"/tmp/install-$NAME.log" 2>&1 </dev/null; then
+    log "$NAME: install failed (continuing without it)"; tail -3 "/tmp/install-$NAME.log"
+    echo "$NAME failed" >> /mnt/etc/llok/agents-info
+    continue
+  fi
+  SRC=$(chroot /mnt /bin/bash -lc "PATH=/root/.local/bin:/root/.opencode/bin:/root/.bun/bin:\$PATH command -v $BIN" 2>/dev/null | tail -1)
+  if [ -n "$SRC" ] && [ "$SRC" != "/usr/local/bin/$BIN" ] && [ "$SRC" != "/usr/bin/$BIN" ]; then
+    chroot /mnt /bin/sh -c "cp -L '$SRC' '/usr/local/bin/$BIN.new' && mv '/usr/local/bin/$BIN.new' '/usr/local/bin/$BIN'" 2>/dev/null \
+      || chroot /mnt /bin/sh -c "ln -sf '$SRC' '/usr/local/bin/$BIN'"
+  fi
+  chmod 0755 "/mnt/usr/local/bin/$BIN" 2>/dev/null || true
+  VER=$(chroot /mnt /bin/sh -c "su agent -s /bin/sh -c '$BIN --version 2>/dev/null | head -1'" 2>/dev/null | tr -d '\r' | cut -c1-60)
+  SHA=$(chroot /mnt /bin/sh -c "sha256sum \$(readlink -f /usr/local/bin/$BIN 2>/dev/null || command -v $BIN) 2>/dev/null" | cut -d' ' -f1)
+  if [ -n "$VER" ]; then
+    log "$NAME: $VER (sha256 ${SHA:0:16}…)"
+    echo "$NAME $VER sha256:$SHA" >> /mnt/etc/llok/agents-info
+  else
+    log "$NAME: installed but not runnable as the agent user"
+    echo "$NAME unverified" >> /mnt/etc/llok/agents-info
+  fi
+done 3< /etc/llok/agents.list
 umount /mnt/dev /mnt/sys /mnt/proc
 
-echo "alpine $(cat /mnt/etc/alpine-release) · claude-code $CLAUDE_VER" > /mnt/etc/llok/rootfs-info
-echo "claude sha256 $(sha256sum /mnt/usr/local/bin/claude | cut -d' ' -f1)" >> /mnt/etc/llok/rootfs-info
+AGENTS_OK=$(grep -v 'failed\|unverified' /mnt/etc/llok/agents-info | cut -d' ' -f1 | tr '\n' ' ' | sed 's/ $//')
+echo "alpine $(cat /mnt/etc/alpine-release) · agents: ${AGENTS_OK:-none}" > /mnt/etc/llok/rootfs-info
 log "root disk uses $(du -sh /mnt 2>/dev/null | cut -f1)"
 umount /mnt
 sync

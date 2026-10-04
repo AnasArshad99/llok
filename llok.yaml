@@ -7,7 +7,7 @@ agent: claude-code
 
 vm:
   cpus: 2
-  memory_mb: 1024
+  memory_mb: 2048
 
 # The repo is mounted read-write at this path inside the guest.
 mount:

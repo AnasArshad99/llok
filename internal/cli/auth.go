@@ -7,106 +7,119 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strings"
 
 	"github.com/creack/pty"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/AnasArshad99/llok/internal/agents"
 	"github.com/AnasArshad99/llok/internal/creds"
 )
 
-var oauthTokenRe = regexp.MustCompile(`sk-ant-oat01-[A-Za-z0-9_\-]{20,}`)
-
 func newAuthCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "auth",
-		Short: "Store provider credentials on the host (the VM never sees them)",
-	}
-
 	var apiKey bool
-	claude := &cobra.Command{
-		Use:   "claude",
-		Short: "Sign in to Claude: runs Claude Code's own login and keeps the token in your Keychain",
-		Long: `Runs "claude setup-token" on this Mac. Your browser opens, you sign in with
-your Claude subscription, and llok captures the long-lived token it prints and
-stores it in the macOS Keychain. Nothing is copied by hand.
+	cmd := &cobra.Command{
+		Use:   "auth <provider>",
+		Short: "Store a provider credential on the host (the VM never sees it)",
+		Long: `Signs in to a provider and keeps the credential in the macOS Keychain.
+Providers that support a subscription login (anthropic, via Claude Code's
+own setup-token) are driven on this Mac and the token is captured; all
+providers accept an API key at a hidden prompt with --api-key.
 
-With --api-key, llok asks for an Anthropic API key at a hidden prompt instead.`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if apiKey {
-				return storeAPIKey()
+Providers: ` + strings.Join(agents.ProviderNames(), ", ") + `. "claude" is an alias for anthropic.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			if name == "claude" {
+				name = "anthropic"
 			}
-			return captureSetupToken()
+			p, ok := agents.Lookup(name)
+			if !ok {
+				return fmt.Errorf("unknown provider %q; known: %s", name, strings.Join(agents.ProviderNames(), ", "))
+			}
+			if apiKey || p.Login == nil {
+				return storeAPIKey(p)
+			}
+			return captureLogin(p)
 		},
 	}
-	claude.Flags().BoolVar(&apiKey, "api-key", false, "store an API key instead of signing in")
+	cmd.Flags().BoolVar(&apiKey, "api-key", false, "store an API key instead of signing in")
 
 	status := &cobra.Command{
 		Use:   "status",
-		Short: "Show which credentials are stored",
+		Short: "Show which provider credentials are stored",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			c, err := creds.Get("anthropic")
-			if errors.Is(err, creds.ErrNotFound) {
-				fmt.Fprintln(os.Stderr, warn("anthropic: not configured (run: llok auth claude)"))
-				return nil
+			for _, name := range agents.ProviderNames() {
+				c, err := creds.Get(name)
+				switch {
+				case errors.Is(err, creds.ErrNotFound):
+					fmt.Fprintln(os.Stderr, styleDim.Render("  "+name+": not configured (llok auth "+name+")"))
+				case err != nil:
+					fmt.Fprintln(os.Stderr, bad(name+": "+err.Error()))
+				default:
+					fmt.Fprintln(os.Stderr, ok(fmt.Sprintf("%s: %s %s", name, c.Kind, creds.Masked(c.Secret))))
+				}
 			}
-			if err != nil {
-				return err
-			}
-			fmt.Fprintln(os.Stderr, ok(fmt.Sprintf("anthropic: %s %s", c.Kind, creds.Masked(c.Secret))))
 			return nil
 		},
 	}
 
 	logout := &cobra.Command{
-		Use:   "logout",
-		Short: "Remove the stored Claude credential",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := creds.Delete("anthropic"); err != nil {
-				return errors.New("nothing to remove")
+		Use:   "logout <provider>",
+		Short: "Remove a stored credential",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			if name == "claude" {
+				name = "anthropic"
 			}
-			fmt.Fprintln(os.Stderr, ok("removed anthropic credential from Keychain"))
+			if err := creds.Delete(name); err != nil {
+				return errors.New("nothing stored for " + name)
+			}
+			fmt.Fprintln(os.Stderr, ok("removed "+name+" credential from Keychain"))
 			return nil
 		},
 	}
-	cmd.AddCommand(claude, status, logout)
+	cmd.AddCommand(status, logout)
 	return cmd
 }
 
-func storeAPIKey() error {
-	fmt.Fprint(os.Stderr, "Anthropic API key (input hidden): ")
+func storeAPIKey(p agents.Provider) error {
+	fmt.Fprintf(os.Stderr, "%s API key (input hidden): ", p.Name)
 	key, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Fprintln(os.Stderr)
 	if err != nil {
 		return err
 	}
-	k := string(key)
-	if len(k) < 20 {
+	k := strings.TrimSpace(string(key))
+	if len(k) < 16 {
 		return errors.New("that does not look like an API key")
 	}
-	if err := creds.Set("anthropic", creds.Credential{Kind: "apikey", Secret: k}); err != nil {
+	if err := creds.Set(p.Name, creds.Credential{Kind: "apikey", Secret: k}); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, ok("stored Anthropic API key in Keychain ("+creds.Masked(k)+")"))
+	fmt.Fprintln(os.Stderr, ok("stored "+p.Name+" API key in Keychain ("+creds.Masked(k)+")"))
 	return nil
 }
 
-func captureSetupToken() error {
-	claudeBin, err := exec.LookPath("claude")
+// captureLogin runs the provider's own sign-in command on this Mac in a
+// pty, mirrors it to the user's terminal, and captures the token it prints.
+func captureLogin(p agents.Provider) error {
+	bin, err := exec.LookPath(p.Login.Needs)
 	if err != nil {
-		return errors.New("claude is not installed on this Mac; install it, or use: llok auth claude --api-key")
+		return fmt.Errorf("%s is not installed on this Mac; install it, or use: llok auth %s --api-key", p.Login.Needs, p.Name)
 	}
-	fmt.Fprintln(os.Stderr, styleDim.Render("running claude setup-token — sign in when the browser opens"))
+	fmt.Fprintln(os.Stderr, styleDim.Render("running "+strings.Join(p.Login.Command, " ")+" — sign in when the browser opens"))
 	fmt.Fprintln(os.Stderr)
 
-	c := exec.Command(claudeBin, "setup-token")
+	c := exec.Command(bin, p.Login.Command[1:]...)
 	ptmx, err := pty.Start(c)
 	if err != nil {
 		return err
 	}
 	defer ptmx.Close()
 
-	// Mirror the process to the user's terminal while capturing its output.
 	stdinFD := int(os.Stdin.Fd())
 	if term.IsTerminal(stdinFD) {
 		if old, err := term.MakeRaw(stdinFD); err == nil {
@@ -133,14 +146,14 @@ func captureSetupToken() error {
 	c.Wait()
 	fmt.Fprint(os.Stderr, "\r\n")
 
-	tok := oauthTokenRe.Find(captured)
+	tok := regexp.MustCompile(p.Login.Pattern).Find(captured)
 	if tok == nil {
-		return errors.New("no token found in claude's output; try again or use --api-key")
+		return fmt.Errorf("no token found in the output; try again or use: llok auth %s --api-key", p.Name)
 	}
-	if err := creds.Set("anthropic", creds.Credential{Kind: "oauth", Secret: string(tok)}); err != nil {
+	if err := creds.Set(p.Name, creds.Credential{Kind: "oauth", Secret: string(tok)}); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, ok("stored Claude token in Keychain ("+creds.Masked(string(tok))+")"))
-	fmt.Fprintln(os.Stderr, styleDim.Render("the VM will only ever see a placeholder; llok injects this token on the way out"))
+	fmt.Fprintln(os.Stderr, ok("stored "+p.Name+" token in Keychain ("+creds.Masked(string(tok))+")"))
+	fmt.Fprintln(os.Stderr, styleDim.Render("the VM only ever sees a placeholder; llok injects this token on the way out"))
 	return nil
 }

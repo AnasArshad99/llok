@@ -73,6 +73,7 @@ mkdir -p "$ROOT/usr/local/bin"
 install -m 0755 "$WORK/llok-guest" "$ROOT/usr/local/bin/llok-guest"
 echo "$ALPINE_BRANCH" > "$ROOT/etc/llok/alpine-branch"
 echo "${LLOK_CLAUDE_VERSION:-latest}" > "$ROOT/etc/llok/claude-version"
+install -m 0644 "$WORK/agents.list" "$ROOT/etc/llok/agents.list"
 
 # Only the modules we need, decompressed so busybox insmod takes them by path.
 MODDIR=$(ls -d "$KDIR"/lib/modules/*)
