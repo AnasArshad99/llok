@@ -53,7 +53,7 @@ func setupRepo(dir string, interactive bool) (*config.Config, error) {
 	}
 	printBox("llok initialised", kv([][2]string{
 		{"project", cfg.Name},
-		{"agent", cfg.Agent},
+		{"agent", cfg.Agent.Render()},
 		{"vm", fmt.Sprintf("%d vCPU · %d MiB", cfg.VM.CPUs, cfg.VM.MemoryMB)},
 		{"repo", dir + "  →  " + cfg.Mount.Repo + " (rw)"},
 		{"network", cfg.Network.Mode + "  →  api.anthropic.com only, plus network.allow"},

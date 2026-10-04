@@ -43,10 +43,9 @@ Requires an Apple silicon Mac on macOS 26 or newer, Go 1.26, and the Xcode comma
 ## Use
 
 ```bash
-llok auth anthropic # sign in once; the token goes to your Keychain, never the VM
-                    # (openai and google take an API key: llok auth openai --api-key)
+llok auth anthropic # Claude login (or --api-key); llok auth openai = ChatGPT login (or --api-key)
 cd your-repo
-llok                # first run asks which agent, writes llok.yaml, then boots
+llok                # first run asks which agents, writes llok.yaml, then boots
 ```
 
 Inside the VM, run any agent whose provider you have signed in to:
@@ -75,7 +74,7 @@ writes the policy file without booting; `llok init --force` regenerates it.
 | `llok up -c 'make test'` | Run one command in the VM, return its exit code |
 | `llok up --plain` | Raw console, no panel |
 | `llok agents` | List agents and which providers are signed in |
-| `llok auth <provider>` | Store a credential: `anthropic` (subscription login or key), `openai`, `google` (keys) |
+| `llok auth <provider>` | Store a credential: `anthropic` (Claude login or key), `openai` (ChatGPT login or key), `google` (key). Use whichever you have |
 | `llok doctor` | Check hypervisor support, code signing, guest image |
 | `llok guest build` | Rebuild the VM image (for a newer agent version) |
 
@@ -85,7 +84,7 @@ writes the policy file without booting; `llok init --force` regenerates it.
 ever edit.
 
 ```yaml
-agent: claude-code          # or codex, gemini-cli, shell
+agent: [claude-code, codex] # one name or a list; the first is the default
 vm:
   cpus: 2
   memory_mb: 1024

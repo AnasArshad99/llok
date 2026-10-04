@@ -189,3 +189,93 @@ func inputPrompt(title, desc, def string) (string, error) {
 func ansiWidth(s string) int {
 	return lipgloss.Width(s)
 }
+
+// multiPrompt renders a checklist. Space toggles, enter confirms; at least
+// one item must be selected. Returns the selected values in list order.
+func multiPrompt[T any](title, desc string, opts []option[T], checked []bool) ([]T, error) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		var out []T
+		for i, o := range opts {
+			if checked[i] {
+				out = append(out, o.Value)
+			}
+		}
+		return out, nil
+	}
+	old, err := term.MakeRaw(fd)
+	if err != nil {
+		return nil, err
+	}
+	defer term.Restore(fd, old)
+
+	cur := 0
+	lines := 0
+	render := func() {
+		if lines > 0 {
+			fmt.Fprintf(os.Stderr, "\x1b[%dA\x1b[J", lines)
+		}
+		var b strings.Builder
+		b.WriteString(stylePromptTitle.Render(title) + "\r\n")
+		if desc != "" {
+			b.WriteString(stylePromptDesc.Render(desc) + "\r\n")
+		}
+		for i, o := range opts {
+			box := "[ ]"
+			if checked[i] {
+				box = styleSelected.Render("[x]")
+			}
+			ptr := "    "
+			if i == cur {
+				ptr = styleCursor.Render("  ❯ ")
+			}
+			b.WriteString(ptr + box + " " + o.Label + "\r\n")
+		}
+		b.WriteString(stylePromptDesc.Render("  ↑/↓ move · space toggle · enter confirm · esc cancel") + "\r\n")
+		s := b.String()
+		lines = strings.Count(s, "\n")
+		fmt.Fprint(os.Stderr, s)
+	}
+	render()
+
+	buf := make([]byte, 64)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil || n == 0 {
+			return nil, errAborted
+		}
+		for _, key := range splitKeys(buf[:n]) {
+			switch key {
+			case " ":
+				checked[cur] = !checked[cur]
+			case "\r", "\n":
+				var out []T
+				var labels []string
+				for i, o := range opts {
+					if checked[i] {
+						out = append(out, o.Value)
+						labels = append(labels, strings.Fields(o.Label)[0])
+					}
+				}
+				if len(out) == 0 {
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "\x1b[%dA\x1b[J", lines)
+				fmt.Fprintf(os.Stderr, "%s %s\r\n", stylePromptTitle.Render(title), styleSelected.Render(strings.Join(labels, ", ")))
+				return out, nil
+			case "\x1b[A", "k":
+				if cur > 0 {
+					cur--
+				}
+			case "\x1b[B", "j":
+				if cur < len(opts)-1 {
+					cur++
+				}
+			case "\x03", "\x1b", "q":
+				fmt.Fprint(os.Stderr, "\r\n")
+				return nil, errAborted
+			}
+		}
+		render()
+	}
+}

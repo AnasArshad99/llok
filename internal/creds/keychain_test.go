@@ -16,7 +16,7 @@ func TestKeychainRoundTrip(t *testing.T) {
 	}
 	defer Delete("roundtrip")
 	got, err := Get("roundtrip")
-	if err != nil || got != want {
+	if err != nil || got.Kind != want.Kind || got.Secret != want.Secret {
 		t.Fatalf("Get = %+v, %v; want %+v", got, err, want)
 	}
 	if err := Delete("roundtrip"); err != nil {

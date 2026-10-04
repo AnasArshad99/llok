@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -18,9 +19,9 @@ const FileName = "llok.yaml"
 
 // Config is the parsed llok.yaml.
 type Config struct {
-	Version int    `yaml:"version"`
-	Name    string `yaml:"name"`
-	Agent   string `yaml:"agent"`
+	Version int       `yaml:"version"`
+	Name    string    `yaml:"name"`
+	Agent   AgentList `yaml:"agent"` // one name or a list; the first is the default
 	VM      struct {
 		CPUs     uint   `yaml:"cpus"`
 		MemoryMB uint64 `yaml:"memory_mb"`
@@ -38,13 +39,69 @@ type Config struct {
 	Agents map[string]agents.Agent `yaml:"agents,omitempty"`
 }
 
-// ResolveAgent returns the agent this repo is configured for.
+// AgentList is the agent: field: "claude-code" or [claude-code, codex].
+type AgentList []string
+
+// UnmarshalYAML accepts a scalar or a sequence.
+func (l *AgentList) UnmarshalYAML(n *yaml.Node) error {
+	switch n.Kind {
+	case yaml.ScalarNode:
+		if n.Value == "" {
+			*l = nil
+			return nil
+		}
+		*l = AgentList{n.Value}
+		return nil
+	case yaml.SequenceNode:
+		var out []string
+		if err := n.Decode(&out); err != nil {
+			return err
+		}
+		*l = out
+		return nil
+	}
+	return fmt.Errorf("agent must be a name or a list of names")
+}
+
+// Render writes the field as YAML: a bare name, or a flow list.
+func (l AgentList) Render() string {
+	switch len(l) {
+	case 0:
+		return "shell"
+	case 1:
+		return l[0]
+	}
+	return "[" + strings.Join(l, ", ") + "]"
+}
+
+// Primary is the default agent, or "" when none is set.
+func (l AgentList) Primary() string {
+	if len(l) == 0 {
+		return ""
+	}
+	return l[0]
+}
+
+// ResolveAgent returns the default agent this repo is configured for.
 func (c *Config) ResolveAgent() (agents.Agent, error) {
-	name := c.Agent
+	name := c.Agent.Primary()
 	if name == "" {
 		name = "shell"
 	}
 	return agents.Resolve(name, c.Agents)
+}
+
+// ResolveAgents returns every configured agent, default first.
+func (c *Config) ResolveAgents() ([]agents.Agent, error) {
+	var out []agents.Agent
+	for _, n := range c.Agent {
+		a, err := agents.Resolve(n, c.Agents)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, nil
 }
 
 // GuardRules returns the effective supervisor rule set.
@@ -54,7 +111,7 @@ func (c *Config) GuardRules() []guard.Rule {
 
 // Default returns the built-in defaults.
 func Default() *Config {
-	c := &Config{Version: 1, Name: "project", Agent: "claude-code"}
+	c := &Config{Version: 1, Name: "project", Agent: AgentList{"claude-code"}}
 	c.VM.CPUs = 2
 	c.VM.MemoryMB = 1024
 	c.Mount.Repo = "/repo"
@@ -68,8 +125,8 @@ func (c *Config) Render() []byte {
 version: %d
 name: %s
 
-# Which coding agent the VM is set up for. Built in: claude-code, codex,
-# gemini-cli, shell. (llok agents lists them.)
+# Which coding agents the VM is set up for: one name, or a list whose first
+# entry is the default. Built in: claude-code, codex, gemini-cli, shell.
 agent: %s
 
 vm:
@@ -101,7 +158,7 @@ network:
 #     action: notify
 #     message: lockfile changed
 rules: []
-`, c.Version, c.Name, c.Agent, c.VM.CPUs, c.VM.MemoryMB, c.Mount.Repo, c.Network.Mode))
+`, c.Version, c.Name, c.Agent.Render(), c.VM.CPUs, c.VM.MemoryMB, c.Mount.Repo, c.Network.Mode))
 }
 
 // Load reads llok.yaml from dir, falling back to defaults when absent.
@@ -134,10 +191,8 @@ func Load(dir string) (*Config, error) {
 			return nil, fmt.Errorf("%s: agents: %w", FileName, err)
 		}
 	}
-	if c.Agent != "" {
-		if _, err := c.ResolveAgent(); err != nil {
-			return nil, fmt.Errorf("%s: %w", FileName, err)
-		}
+	if _, err := c.ResolveAgents(); err != nil {
+		return nil, fmt.Errorf("%s: %w", FileName, err)
 	}
 	return c, nil
 }

@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -23,9 +25,10 @@ func newAuthCmd() *cobra.Command {
 		Use:   "auth <provider>",
 		Short: "Store a provider credential on the host (the VM never sees it)",
 		Long: `Signs in to a provider and keeps the credential in the macOS Keychain.
-Providers that support a subscription login (anthropic, via Claude Code's
-own setup-token) are driven on this Mac and the token is captured; all
-providers accept an API key at a hidden prompt with --api-key.
+Subscription logins are driven on this Mac with the vendor's own CLI and the
+result is captured: anthropic via "claude setup-token", openai via "codex
+login" (ChatGPT). All providers accept an API key at a hidden prompt with
+--api-key. Use whichever you have.
 
 Providers: ` + strings.Join(agents.ProviderNames(), ", ") + `. "claude" is an alias for anthropic.`,
 		Args: cobra.ExactArgs(1),
@@ -38,7 +41,13 @@ Providers: ` + strings.Join(agents.ProviderNames(), ", ") + `. "claude" is an al
 			if !ok {
 				return fmt.Errorf("unknown provider %q; known: %s", name, strings.Join(agents.ProviderNames(), ", "))
 			}
-			if apiKey || p.Login == nil {
+			if apiKey {
+				return storeAPIKey(p)
+			}
+			if p.Name == "openai" {
+				return chatgptLogin(p)
+			}
+			if p.Login == nil {
 				return storeAPIKey(p)
 			}
 			return captureLogin(p)
@@ -155,5 +164,63 @@ func captureLogin(p agents.Provider) error {
 	}
 	fmt.Fprintln(os.Stderr, ok("stored "+p.Name+" token in Keychain ("+creds.Masked(string(tok))+")"))
 	fmt.Fprintln(os.Stderr, styleDim.Render("the VM only ever sees a placeholder; llok injects this token on the way out"))
+	return nil
+}
+
+// chatgptLogin stores a ChatGPT login for Codex. If codex is installed it
+// runs "codex login" (browser flow, callback on this Mac); either way it
+// then imports the tokens Codex wrote to ~/.codex/auth.json. The access and
+// refresh tokens stay on the host; the account id and identity token are
+// kept as metadata the guest needs alongside the placeholder.
+func chatgptLogin(p agents.Provider) error {
+	authFile := filepath.Join(os.Getenv("HOME"), ".codex", "auth.json")
+	if bin, err := exec.LookPath("codex"); err == nil {
+		fmt.Fprintln(os.Stderr, styleDim.Render("running codex login — sign in with ChatGPT when the browser opens"))
+		c := exec.Command(bin, "login")
+		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := c.Run(); err != nil {
+			return fmt.Errorf("codex login failed: %w  (or use: llok auth openai --api-key)", err)
+		}
+	} else if _, err := os.Stat(authFile); err != nil {
+		return errors.New("codex is not installed on this Mac and no ChatGPT login was found; install Codex and run llok auth openai again, or use: llok auth openai --api-key")
+	} else {
+		fmt.Fprintln(os.Stderr, styleDim.Render("codex is not on PATH; importing the ChatGPT login Codex already saved on this Mac"))
+	}
+	data, err := os.ReadFile(authFile)
+	if err != nil {
+		return err
+	}
+	var f struct {
+		AuthMode string  `json:"auth_mode"`
+		APIKey   *string `json:"OPENAI_API_KEY"`
+		Tokens   *struct {
+			ID, Access, Refresh, Account string `json:"-"`
+			IDToken                      string `json:"id_token"`
+			AccessToken                  string `json:"access_token"`
+			RefreshToken                 string `json:"refresh_token"`
+			AccountID                    string `json:"account_id"`
+		} `json:"tokens"`
+	}
+	if err := json.Unmarshal(data, &f); err != nil {
+		return fmt.Errorf("could not read %s: %w", authFile, err)
+	}
+	switch {
+	case f.Tokens != nil && f.Tokens.AccessToken != "":
+		c := creds.Credential{Kind: "chatgpt", Secret: f.Tokens.AccessToken,
+			Meta: map[string]string{"account_id": f.Tokens.AccountID, "id_token": f.Tokens.IDToken, "refresh_token": ""}}
+		delete(c.Meta, "refresh_token")
+		if err := creds.Set(p.Name, c); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, ok("stored ChatGPT login for Codex in Keychain ("+creds.Masked(c.Secret)+")"))
+		fmt.Fprintln(os.Stderr, styleDim.Render("the VM only ever sees placeholders; when the token expires, run llok auth openai again"))
+	case f.APIKey != nil && *f.APIKey != "":
+		if err := creds.Set(p.Name, creds.Credential{Kind: "apikey", Secret: *f.APIKey}); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, ok("stored the API key Codex had saved in Keychain ("+creds.Masked(*f.APIKey)+")"))
+	default:
+		return errors.New("no usable login in " + authFile + "; run codex login, or use: llok auth openai --api-key")
+	}
 	return nil
 }

@@ -33,7 +33,10 @@ trusted as data but not as policy.
 - **The agent stealing your credentials.** The VM holds a placeholder. The
   real token lives in the macOS Keychain and is injected by the broker on
   the way out. TLS to the provider's hosts is terminated by the broker with
-  a local CA only the guest trusts, so injection works for every call.
+  a local CA only the guest trusts, so injection works for every call. For
+  a ChatGPT login the guest also receives the account id and the identity
+  token, which name the account but do not grant API access; the access
+  and refresh tokens never enter the VM.
 - **The agent persisting.** The root disk is read-only with a memory
   overlay. Every session starts from the same image; nothing the agent does
   outside the repo survives power-off.

@@ -43,23 +43,33 @@ func newAgentsCmd() *cobra.Command {
 	}
 }
 
-// agentPicker asks which agent to use, for first-run setup and for a
-// session whose llok.yaml has no agent set.
-func agentPicker(def string) (string, error) {
+// agentPicker asks which agents to set the VM up for. Several may be
+// chosen; the first in list order becomes the default.
+func agentPicker(def []string) ([]string, error) {
 	var opts []option[string]
-	idx := 0
-	for i, name := range agents.Names() {
+	var checked []bool
+	for _, name := range agents.Names() {
+		if name == "shell" {
+			continue
+		}
 		label := name
 		if note := agents.Note(name); note != "" {
 			label += "  " + styleDim.Render(note)
 		}
 		opts = append(opts, option[string]{label, name})
-		if name == def {
-			idx = i
+		on := false
+		for _, d := range def {
+			if d == name {
+				on = true
+			}
 		}
+		checked = append(checked, on)
+	}
+	if len(def) == 0 {
+		checked[0] = true
 	}
 	if !isTTY() {
-		return "", errors.New("no agent chosen; set agent: in llok.yaml")
+		return nil, errors.New("no agent chosen; set agent: in llok.yaml")
 	}
-	return selectPrompt("Agent", "Which coding agent should this VM be set up for?", opts, idx)
+	return multiPrompt("Agents", "Which coding agents should this VM be set up for? (space to toggle; you can run any of them inside)", opts, checked)
 }

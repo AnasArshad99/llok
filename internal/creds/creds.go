@@ -23,8 +23,11 @@ var service = func() string {
 
 // Credential is what the broker injects.
 type Credential struct {
-	Kind   string `json:"kind"` // apikey | oauth
+	Kind   string `json:"kind"` // apikey | oauth | chatgpt
 	Secret string `json:"secret"`
+	// Meta holds non-secret companions of the secret (an account id, an
+	// identity token) that the agent needs alongside the placeholder.
+	Meta map[string]string `json:"meta,omitempty"`
 }
 
 // ErrNotFound means nothing is stored for that provider.

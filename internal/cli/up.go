@@ -85,7 +85,7 @@ off from the host.`,
 			if err := ensureTrusted(cfg, absRepo); err != nil {
 				return err
 			}
-			if cfg.Network.Mode == "none" && cfg.Agent != "shell" && cfg.Agent != "" {
+			if cfg.Network.Mode == "none" && cfg.Agent.Primary() != "shell" && cfg.Agent.Primary() != "" {
 				fmt.Fprintln(os.Stderr, warn("network.mode is none: the agent cannot reach its provider and will fail to sign in."))
 				fmt.Fprintln(os.Stderr, styleDim.Render("  set  network: mode: broker  in "+config.FileName+" (or run: llok init --force), then: llok auth status"))
 			}
@@ -115,15 +115,26 @@ off from the host.`,
 			// Which agent this session is for, and what it needs. --agent
 			// overrides llok.yaml for this run only.
 			if agentFl != "" {
-				cfg.Agent = agentFl
+				cfg.Agent = config.AgentList{agentFl}
 			}
 			agent, err := cfg.ResolveAgent()
 			if err != nil {
 				return err
 			}
-			if agent.Name == "shell" && command == "" && isTTY() && cfg.Agent == "" {
-				if name, err := agentPicker("claude-code"); err == nil {
-					agent, _ = agents.Resolve(name, cfg.Agents)
+			if agent.Name == "shell" && command == "" && isTTY() && len(cfg.Agent) == 0 {
+				if names, err := agentPicker(nil); err == nil && len(names) > 0 {
+					agent, _ = agents.Resolve(names[0], cfg.Agents)
+				}
+			}
+			// Secondary agents only need a warning when their provider has
+			// no credential; the default agent's provider is required.
+			if others, err := cfg.ResolveAgents(); err == nil {
+				for _, o := range others[min(1, len(others)):] {
+					if len(o.Providers) > 0 {
+						if _, err := creds.Get(o.Providers[0]); errors.Is(err, creds.ErrNotFound) {
+							fmt.Fprintln(os.Stderr, warn(o.Name+" is listed but "+o.Providers[0]+" is not signed in; run: llok auth "+o.Providers[0]))
+						}
+					}
 				}
 			}
 
@@ -143,7 +154,7 @@ off from the host.`,
 						lookupErr = err
 						return agents.Credential{}, false
 					}
-					return agents.Credential{Kind: c.Kind, Secret: c.Secret}, true
+					return agents.Credential{Kind: c.Kind, Secret: c.Secret, Meta: c.Meta}, true
 				}, "http://127.0.0.1:3128")
 				if lookupErr != nil {
 					return lookupErr
@@ -158,7 +169,7 @@ off from the host.`,
 						continue
 					}
 					r := broker.Route{Name: p.Name, Hosts: p.Hosts, Cred: broker.Credential{Kind: c.Kind, Secret: c.Secret}}
-					if c.Kind == "oauth" && p.TokenHeader != "" {
+					if (c.Kind == "oauth" || c.Kind == "chatgpt") && p.TokenHeader != "" {
 						r.Header, r.Format = p.TokenHeader, p.TokenFormat
 					} else {
 						r.Header, r.Format = p.KeyHeader, p.KeyFormat

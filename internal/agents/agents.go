@@ -76,13 +76,15 @@ var providers = map[string]Provider{
 		},
 	},
 	"openai": {
-		Name:       "openai",
-		Hosts:      []string{"api.openai.com", "chatgpt.com", "auth.openai.com", "files.openai.com"},
-		Upstream:   "https://api.openai.com",
-		KeyEnv:     "OPENAI_API_KEY",
-		BaseURLEnv: "OPENAI_BASE_URL",
-		KeyHeader:  "Authorization",
-		KeyFormat:  "Bearer {secret}",
+		Name:        "openai",
+		Hosts:       []string{"api.openai.com", "chatgpt.com", "auth.openai.com", "files.openai.com"},
+		Upstream:    "https://api.openai.com",
+		KeyEnv:      "OPENAI_API_KEY",
+		BaseURLEnv:  "OPENAI_BASE_URL",
+		KeyHeader:   "Authorization",
+		KeyFormat:   "Bearer {secret}",
+		TokenHeader: "Authorization", // ChatGPT login: Codex sends its access token as a bearer
+		TokenFormat: "Bearer {secret}",
 	},
 	"google": {
 		Name:       "google",
@@ -117,12 +119,23 @@ var builtin = map[string]Agent{
 		Binary:    "codex",
 		Install:   "npm install -g @openai/codex",
 		Providers: []string{"openai"},
-		// Codex only counts itself signed in with an auth file; write the
-		// placeholder there and prefer API-key auth over the ChatGPT login.
+		// Codex only counts itself signed in with an auth file. Seed it in
+		// the mode the user signed in with: an API key, or a ChatGPT login
+		// (access/refresh tokens are placeholders the broker swaps; the
+		// account id and identity token are not secrets and travel as-is).
 		Setup: `mkdir -p "$HOME/.codex"
-[ -f "$HOME/.codex/auth.json" ] || printf '{"OPENAI_API_KEY":"%s"}\n' "$OPENAI_API_KEY" > "$HOME/.codex/auth.json"
-grep -q preferred_auth_method "$HOME/.codex/config.toml" 2>/dev/null || printf 'preferred_auth_method = "apikey"\n' >> "$HOME/.codex/config.toml"`,
-		Note: "OpenAI's CLI; API key",
+if [ ! -f "$HOME/.codex/auth.json" ]; then
+  if [ "$LLOK_CRED_OPENAI" = chatgpt ]; then
+    printf '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"id_token":"%s","access_token":"llok-placeholder-token","refresh_token":"llok-placeholder-token","account_id":"%s"},"last_refresh":"%s"}\n' \
+      "$LLOK_OPENAI_ID_TOKEN" "$LLOK_OPENAI_ACCOUNT_ID" "$(date -u +%Y-%m-%dT%H:%M:%S.000000Z)" > "$HOME/.codex/auth.json"
+    MODE=chatgpt
+  else
+    printf '{"auth_mode":"apikey","OPENAI_API_KEY":"%s"}\n' "$OPENAI_API_KEY" > "$HOME/.codex/auth.json"
+    MODE=apikey
+  fi
+  grep -q preferred_auth_method "$HOME/.codex/config.toml" 2>/dev/null || printf 'preferred_auth_method = "%s"\n' "$MODE" >> "$HOME/.codex/config.toml"
+fi`,
+		Note: "OpenAI's CLI; ChatGPT login or API key",
 	},
 	"gemini-cli": {
 		Binary:    "gemini",
@@ -218,8 +231,9 @@ func Note(name string) string { return builtin[name].Note }
 
 // Credential is what the host has stored for a provider.
 type Credential struct {
-	Kind   string // "apikey" or "oauth"
+	Kind   string // "apikey", "oauth" or "chatgpt"
 	Secret string
+	Meta   map[string]string // non-secret companions, exported to the guest
 }
 
 // Session is everything the broker and the guest need for one run of an
@@ -242,9 +256,17 @@ func Prepare(a Agent, lookup func(provider string) (Credential, bool), brokerURL
 	add := func(p Provider, c Credential) {
 		s.Providers = append(s.Providers, p)
 		s.Creds[p.Name] = c
-		if c.Kind == "oauth" && p.TokenEnv != "" {
+		up := strings.ToUpper(p.Name)
+		s.Env["LLOK_CRED_"+up] = c.Kind
+		for k, v := range c.Meta {
+			s.Env["LLOK_"+up+"_"+strings.ToUpper(k)] = v
+		}
+		switch {
+		case c.Kind == "oauth" && p.TokenEnv != "":
 			s.Env[p.TokenEnv] = PlaceholderToken
-		} else if p.KeyEnv != "" {
+		case c.Kind == "chatgpt":
+			// the agent reads its login from a file the setup script seeds
+		case p.KeyEnv != "":
 			s.Env[p.KeyEnv] = PlaceholderKey
 		}
 		if p.BaseURLEnv != "" {
