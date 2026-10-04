@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Run coding agents inside locked microVMs.</b><br>
-  Claude Code, opencode, Codex, Qwen Code, Gemini CLI. Your repo goes in. One audited channel comes out. Nothing else.
+  Claude Code, Codex, Gemini CLI. Your repo goes in. One audited channel comes out. Nothing else.
 </p>
 
 <p align="center">
@@ -44,20 +44,17 @@ Requires an Apple silicon Mac on macOS 26 or newer, Go 1.26, and the Xcode comma
 
 ```bash
 llok auth anthropic # sign in once; the token goes to your Keychain, never the VM
+                    # (openai and google take an API key: llok auth openai --api-key)
 cd your-repo
 llok                # first run asks which agent, writes llok.yaml, then boots
 ```
 
 Inside the VM, run any agent whose provider you have signed in to:
-`claude`, `opencode`, `codex`, `qwen` or `gemini`. Every session carries
-all your stored providers, so you can use several agents in one VM;
-`agent:` in `llok.yaml` only sets the default, and `llok --agent codex`
-overrides it for one run. `llok agents` lists agents and sign-in state.
-`llok init` writes the policy file without booting; `llok init --force`
-regenerates it.
-
-One limit: Codex and Qwen Code both read `OPENAI_BASE_URL`, so only the
-configured agent of those two is pointed correctly in a given session.
+`claude`, `codex` or `gemini`. Every session carries all your stored
+providers, so you can use several agents in one VM; `agent:` in
+`llok.yaml` only sets the default, and `llok --agent codex` overrides it
+for one run. `llok agents` lists agents and sign-in state. `llok init`
+writes the policy file without booting; `llok init --force` regenerates it.
 
 `llok` (or `llok up`) shows the VM console on the left and a live panel on the right: state, repo mapping, VM size, network policy, uptime, and every request the broker allowed or refused.
 
@@ -78,7 +75,7 @@ configured agent of those two is pointed correctly in a given session.
 | `llok up -c 'make test'` | Run one command in the VM, return its exit code |
 | `llok up --plain` | Raw console, no panel |
 | `llok agents` | List agents and which providers are signed in |
-| `llok auth <provider>` | Store a credential: `anthropic` (subscription login or key), `openai`, `google`, `dashscope` (keys) |
+| `llok auth <provider>` | Store a credential: `anthropic` (subscription login or key), `openai`, `google` (keys) |
 | `llok doctor` | Check hypervisor support, code signing, guest image |
 | `llok guest build` | Rebuild the VM image (for a newer agent version) |
 
@@ -88,7 +85,7 @@ configured agent of those two is pointed correctly in a given session.
 ever edit.
 
 ```yaml
-agent: claude-code          # or opencode, codex, qwen-code, gemini-cli, shell
+agent: claude-code          # or codex, gemini-cli, shell
 vm:
   cpus: 2
   memory_mb: 1024

@@ -35,21 +35,21 @@ func TestPrepareMissingPrimaryCredential(t *testing.T) {
 	}
 }
 
-func TestPrepareOptionalSecondary(t *testing.T) {
-	a, _ := Resolve("opencode", nil)
+func TestPrepareOnlyStoredProvidersRouted(t *testing.T) {
+	a, _ := Resolve("gemini-cli", nil)
 	s, err := Prepare(a, func(p string) (Credential, bool) {
-		return Credential{Kind: "apikey", Secret: "k"}, p == "anthropic"
+		return Credential{Kind: "apikey", Secret: "k"}, p == "google"
 	}, "u")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Creds) != 1 || s.Env["ANTHROPIC_API_KEY"] != PlaceholderKey {
+	if len(s.Creds) != 1 || s.Env["GEMINI_API_KEY"] != PlaceholderKey {
 		t.Errorf("creds=%v env=%v", s.Creds, s.Env)
 	}
 	if _, has := s.Env["OPENAI_API_KEY"]; has {
 		t.Error("provider without a credential must not get a placeholder")
 	}
-	if len(s.Hosts()) != 3 {
+	if len(s.Hosts()) != 1 {
 		t.Errorf("only providers with credentials are routed: %v", s.Hosts())
 	}
 }
@@ -68,10 +68,10 @@ func TestPrepareIncludesOtherStoredProviders(t *testing.T) {
 	if s.Env["OPENAI_API_KEY"] != PlaceholderKey || s.Env["OPENAI_BASE_URL"] != "http://b/openai" {
 		t.Errorf("other stored providers should be usable: %v", s.Env)
 	}
-	q, _ := Resolve("qwen-code", nil)
-	qs, _ := Prepare(q, func(p string) (Credential, bool) { return Credential{Kind: "apikey", Secret: "k"}, true }, "http://b")
-	if qs.Env["OPENAI_BASE_URL"] != "http://b/dashscope/compatible-mode/v1" {
-		t.Errorf("agent env should win and expand {broker}: %v", qs.Env["OPENAI_BASE_URL"])
+	c, _ := Resolve("codex", nil)
+	cs, _ := Prepare(c, func(p string) (Credential, bool) { return Credential{Kind: "apikey", Secret: "k"}, true }, "http://b")
+	if cs.Env["OPENAI_BASE_URL"] != "http://b/openai" {
+		t.Errorf("codex base url: %v", cs.Env["OPENAI_BASE_URL"])
 	}
 }
 

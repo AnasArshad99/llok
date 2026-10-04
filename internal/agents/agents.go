@@ -89,15 +89,6 @@ var providers = map[string]Provider{
 		KeyHeader:  "X-Goog-Api-Key",
 		KeyFormat:  "{secret}",
 	},
-	"dashscope": {
-		Name:       "dashscope",
-		Hosts:      []string{"dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"},
-		Upstream:   "https://dashscope-intl.aliyuncs.com",
-		KeyEnv:     "OPENAI_API_KEY", // Qwen Code speaks the OpenAI-compatible API
-		BaseURLEnv: "OPENAI_BASE_URL",
-		KeyHeader:  "Authorization",
-		KeyFormat:  "Bearer {secret}",
-	},
 }
 
 var builtin = map[string]Agent{
@@ -111,27 +102,11 @@ var builtin = map[string]Agent{
 		},
 		Note: "Anthropic's CLI; subscription login or API key",
 	},
-	"opencode": {
-		Binary:    "opencode",
-		Install:   "curl -fsSL https://opencode.ai/install | bash",
-		Providers: []string{"anthropic", "openai", "google"},
-		Note:      "open-source multi-provider CLI; uses whichever keys you have stored",
-	},
 	"codex": {
 		Binary:    "codex",
 		Install:   "npm install -g @openai/codex",
 		Providers: []string{"openai"},
 		Note:      "OpenAI's CLI; API key",
-	},
-	"qwen-code": {
-		Binary:    "qwen",
-		Install:   "npm install -g @qwen-code/qwen-code",
-		Providers: []string{"dashscope"},
-		Env: map[string]string{
-			"OPENAI_BASE_URL": "{broker}/dashscope/compatible-mode/v1",
-			"OPENAI_MODEL":    "qwen3-coder-plus",
-		},
-		Note: "Alibaba's Qwen CLI; DashScope API key",
 	},
 	"gemini-cli": {
 		Binary:    "gemini",

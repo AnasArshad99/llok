@@ -68,8 +68,8 @@ func (c *Config) Render() []byte {
 version: %d
 name: %s
 
-# Which coding agent the VM is set up for. Built in: claude-code, opencode,
-# codex, qwen-code, gemini-cli, shell. (llok agents lists them.)
+# Which coding agent the VM is set up for. Built in: claude-code, codex,
+# gemini-cli, shell. (llok agents lists them.)
 agent: %s
 
 vm:
