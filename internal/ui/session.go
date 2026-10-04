@@ -522,7 +522,7 @@ func (s *Session) panelLines() []string {
 
 func (s *Session) networkDesc() string {
 	if s.info.Network != "broker" {
-		return sOK.Render("none")
+		return sWarn.Render("none") + sDim.Render(" · agent cannot sign in")
 	}
 	d := sAccent.Render("broker") + sDim.Render(" · api.anthropic.com")
 	if s.info.Allow > 0 {

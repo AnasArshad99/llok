@@ -69,6 +69,10 @@ off from the host.`,
 			if err := ensureTrusted(cfg, absRepo); err != nil {
 				return err
 			}
+			if cfg.Network.Mode == "none" && cfg.Agent != "shell" {
+				fmt.Fprintln(os.Stderr, warn("network.mode is none: the agent cannot reach its provider and will fail to sign in."))
+				fmt.Fprintln(os.Stderr, styleDim.Render("  set  network: mode: broker  in "+config.FileName+" (or run: llok init --force), then: llok auth status"))
+			}
 
 			interactive := command == ""
 			useUI := interactive && isTTY() && !plain

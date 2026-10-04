@@ -1,5 +1,9 @@
 # llok policy. Everything the agent can touch is declared here.
 version: 1
+name: llok
+
+# Which coding agent runs inside the VM (claude-code | shell).
+agent: claude-code
 
 vm:
   cpus: 2
@@ -9,8 +13,24 @@ vm:
 mount:
   repo: /repo
 
-# The guest has no network device. In a later step the only way out will be
-# the llok broker on the host, and this is where you allow destinations.
+# The guest has no network device. Its only way out is the llok broker on
+# the host, which lets the agent reach its provider API with your credential
+# injected on the way out. Anything else must be listed under allow.
+#   mode: broker | none
+#   allow: extra hosts the agent may reach, e.g. registry.npmjs.org, "*.github.com"
 network:
-  mode: none
+  mode: broker
   allow: []
+
+# Supervisor rules run on your Mac over what it can see: files the agent
+# changed in the repo and hosts the broker was asked for. Built-in defaults:
+#   git-hooks    pause the VM when .git/hooks/* is written
+#   ci-config    notify when .github/workflows/* changes
+#   mass-delete  pause the VM when 50+ files are deleted within 10s
+# Override by name, disable with action: off, or add your own:
+#   - name: lockfile
+#     on: file
+#     path: package-lock.json
+#     action: notify
+#     message: lockfile changed
+rules: []
