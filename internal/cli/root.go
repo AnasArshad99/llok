@@ -21,17 +21,23 @@ func Execute() error {
 }
 
 func newRoot() *cobra.Command {
+	up := newUpCmd()
 	root := &cobra.Command{
 		Use:           "llok",
 		Short:         "Run coding agents inside locked microVMs",
-		Long:          "llok boots a throwaway microVM with your repo inside and nothing else: no network, no host access, one audited channel out.",
+		Long:          "llok boots a throwaway microVM with your repo inside and nothing else: no network, no host access, one audited channel out.\n\nRunning llok with no arguments is the same as llok up.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		// Bare `llok` starts a session, like `llok up`.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return up.RunE(up, args)
+		},
 		PersistentPreRun: func(*cobra.Command, []string) {
 			saneTerminal()
 		},
 	}
-	root.AddCommand(newInitCmd(), newUpCmd(), newAuthCmd(), newAuditCmd(), newRulesCmd(), newTrustCmd(), newGuestCmd(), newDoctorCmd(), newVersionCmd())
+	root.AddCommand(newInitCmd(), up, newAuthCmd(), newAuditCmd(), newRulesCmd(), newTrustCmd(), newGuestCmd(), newDoctorCmd(), newVersionCmd())
 	return root
 }
 

@@ -46,10 +46,10 @@ Requires an Apple silicon Mac on macOS 26 or newer, Go 1.26, and the Xcode comma
 llok auth claude    # sign in once; the token goes to your Keychain, never the VM
 cd your-repo
 llok init           # writes llok.yaml
-llok up             # boots the VM and takes over the terminal; run `claude` inside
+llok                # boots the VM and takes over the terminal; run `claude` inside
 ```
 
-`llok up` shows the VM console on the left and a live panel on the right: state, repo mapping, VM size, network policy, uptime, and every request the broker allowed or refused.
+`llok` (or `llok up`) shows the VM console on the left and a live panel on the right: state, repo mapping, VM size, network policy, uptime, and every request the broker allowed or refused.
 
 ```
  llok@project /repo # claude                            │ ● running
@@ -63,7 +63,7 @@ llok up             # boots the VM and takes over the terminal; run `claude` ins
 
 | Command | What it does |
 |---|---|
-| `llok up` | Interactive session. `exit` powers off, Ctrl-] twice forces it |
+| `llok` | Interactive session (same as `llok up`). `exit` powers off, Ctrl-] twice forces it |
 | `llok up -c 'make test'` | Run one command in the VM, return its exit code |
 | `llok up --plain` | Raw console, no panel |
 | `llok auth claude` | Store your Claude login. `--api-key` stores a key instead |

@@ -45,7 +45,7 @@ func newInitCmd() *cobra.Command {
 				{"policy", config.FileName},
 			}))
 			fmt.Fprintln(os.Stderr)
-			fmt.Fprintln(os.Stderr, styleDim.Render("next:")+"  llok up          "+styleDim.Render("open a shell inside the VM"))
+			fmt.Fprintln(os.Stderr, styleDim.Render("next:")+"  llok             "+styleDim.Render("open a session inside the VM"))
 			fmt.Fprintln(os.Stderr, "       llok up -c CMD   "+styleDim.Render("run one command and power off"))
 			return nil
 		},
