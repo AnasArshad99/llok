@@ -48,7 +48,9 @@ trusted as data but not as policy.
   rendered through an emulator and never writes to the host terminal.
 - **A repository that rewrites its own policy.** `llok.yaml` travels with
   the repo, so a cloned repo's allowlist and rule changes must be approved
-  once per repo before they take effect, and again after any change.
+  once per repo before they take effect, and again after any change. Inside
+  the guest the file is mounted read-only, so the agent cannot edit or
+  remove it, and a write to it pauses the session as a backstop.
 - **Repo files that execute on your Mac later.** The supervisor watches the
   repo from the host and pauses the VM when the agent writes git hooks,
   `.git/config`, or `.envrc`, and notifies on CI, editor and git attribute

@@ -89,6 +89,13 @@ fi
 MOUNT_STATE="virtiofs, rw"
 mountpoint -q "$REPO" || MOUNT_STATE="FAILED"
 
+# The policy file is the host's, not the agent's: pin it read-only inside
+# the guest so the session cannot edit or remove it (the host re-reads it
+# only at the next llok up, and the supervisor pauses on writes as backstop).
+if [ -f "$REPO/llok.yaml" ]; then
+  mount --bind "$REPO/llok.yaml" "$REPO/llok.yaml" 2>/dev/null \
+    && mount -o remount,bind,ro "$REPO/llok.yaml" "$REPO/llok.yaml" 2>/dev/null
+fi
 t "repo mounted"
 hostname llok 2>/dev/null
 ip link set lo up 2>/dev/null

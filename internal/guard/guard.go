@@ -69,6 +69,10 @@ func Defaults() []Rule {
 			Message: "CI workflow changed"},
 		{Name: "mass-delete", On: KindFile, Op: "delete", Burst: &Burst{Count: 50, Seconds: 10}, Action: ActPause,
 			Message: "many files deleted in a short time"},
+		// The policy file itself: read-only in the guest, and any write that
+		// slips through (or creates one where none existed) stops the session.
+		{Name: "policy-file", On: KindFile, Path: "llok.yaml", Action: ActPause,
+			Message: "llok.yaml was changed from inside the VM"},
 		// Files git itself executes or consults on your Mac at the next
 		// git command: hooksPath, fsmonitor, filters, external diff/merge.
 		{Name: "git-config", On: KindFile, Path: ".git/config", Action: ActPause,
