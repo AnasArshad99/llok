@@ -59,6 +59,9 @@ off from the host.`,
 			if err != nil {
 				return err
 			}
+			if err := checkRepoDir(absRepo); err != nil {
+				return err
+			}
 			kernel, initrd, err := guest.Paths()
 			if err != nil {
 				return err

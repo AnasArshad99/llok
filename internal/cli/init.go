@@ -24,6 +24,9 @@ func newInitCmd() *cobra.Command {
 				return errors.New(config.FileName + " already exists (use --force to overwrite)")
 			}
 			cwd, _ := os.Getwd()
+			if err := checkRepoDir(cwd); err != nil {
+				return err
+			}
 			cfg := config.Default()
 			cfg.Name = filepath.Base(cwd)
 
