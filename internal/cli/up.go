@@ -36,7 +36,6 @@ func newUpCmd() *cobra.Command {
 		repo    string
 		plain   bool
 		verbose bool
-		devNAT  bool
 		agentFl string
 	)
 	cmd := &cobra.Command{
@@ -238,12 +237,9 @@ off from the host.`,
 				Interactive: interactive,
 				HideBanner:  useUI,
 			}
-			if devNAT {
-				if os.Getenv("LLOK_DEV") != "1" {
-					return errors.New("--dev-nat attaches a network device to a session VM; set LLOK_DEV=1 if you really mean it")
-				}
-				opts.NAT = true
-			}
+			// Developer builds (-tags dev) may attach a NAT device; release
+			// builds do not contain that code at all.
+			opts.NAT = devNATEnabled(cmd)
 			if hasRootfs {
 				opts.Disk = rootfs
 				opts.DiskReadOnly = true
@@ -390,7 +386,6 @@ off from the host.`,
 	cmd.Flags().BoolVar(&plain, "plain", false, "no full-screen UI; raw console in the current terminal")
 	cmd.Flags().StringVar(&agentFl, "agent", "", "agent to set this session up for (overrides llok.yaml)")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print the boot summary and run summary")
-	cmd.Flags().BoolVar(&devNAT, "dev-nat", false, "DEVELOPMENT ONLY: attach a NAT network device")
-	_ = cmd.Flags().MarkHidden("dev-nat")
+	registerDevFlags(cmd)
 	return cmd
 }

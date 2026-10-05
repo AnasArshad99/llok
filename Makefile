@@ -10,8 +10,11 @@ guest-agent:
 	mkdir -p internal/guest/bin
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "-s -w" -o internal/guest/bin/llok-guest ./cmd/llok-guest
 
+# DEV=1 includes developer-only code (e.g. --dev-nat); release builds never do.
+TAGS=$(if $(DEV),-tags dev,)
+
 build: guest-agent
-	go build -ldflags "-X $(MODULE)/internal/cli.Version=$(VERSION)" -o $(BIN) ./cmd/llok
+	go build $(TAGS) -ldflags "-X $(MODULE)/internal/cli.Version=$(VERSION)" -o $(BIN) ./cmd/llok
 	codesign --force --sign - --entitlements llok.entitlements $(BIN)
 
 guest: build
