@@ -110,6 +110,14 @@ network:
 | Touch your Mac | no. No shared folders beyond the repo, no host network, no host devices |
 | Program your terminal | no. Output outside the UI is reduced to text and colours |
 
+**Treat a repo an agent has touched as untrusted until you have reviewed the
+diff.** The VM stops the agent reaching your Mac; it cannot stop you running
+a `Makefile`, `package.json` script or `setup.py` the agent edited. llok
+pauses on files that run *automatically* (git hooks, `.git/config`,
+`.envrc`, pre-commit config); files that run when *you* act are yours to
+read first. A branch-and-review step that shows the diff before anything
+reaches your working tree is planned.
+
 Every request is appended to `~/.llok/audit/broker.jsonl`. The threat model,
 what llok does not protect against, and how to report a vulnerability are in
 [SECURITY.md](SECURITY.md).

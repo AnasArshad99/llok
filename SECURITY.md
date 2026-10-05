@@ -61,9 +61,15 @@ trusted as data but not as policy.
 
 ### What llok does not defend against
 
-- **Bad changes to your code.** The agent can write anything into the repo.
-  Review the diff. Working on a branch and returning results for review is
-  planned, not built.
+- **Bad changes to your code, including code your Mac will run later.** The
+  agent can write anything into the repo. A `Makefile`, `package.json`
+  script, `setup.py`, `build.rs` or similar that it edited runs on your Mac
+  the next time you build, install or commit, outside any sandbox. llok
+  pauses on files that run automatically (git hooks, `.git/config`,
+  `.envrc`, `.pre-commit-config.yaml`); it cannot tell a fixed build file
+  from a planted one. Treat a repo an agent has touched as untrusted until
+  you have reviewed the diff, and do not run its build or install scripts
+  before that. Working on a branch and reviewing before merge is planned.
 - **Content the agent sends to the provider.** The broker forwards the
   agent's API requests; it does not inspect or filter their contents. If
   the agent reads a secret from your repo and includes it in a prompt, that

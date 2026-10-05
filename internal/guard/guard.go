@@ -84,6 +84,8 @@ func Defaults() []Rule {
 		// Tools that run repo files automatically when you open the folder.
 		{Name: "direnv", On: KindFile, Path: ".envrc", Action: ActPause,
 			Message: ".envrc was written; direnv runs it when you cd into the repo"},
+		{Name: "pre-commit", On: KindFile, Path: ".pre-commit-config.yaml", Action: ActPause,
+			Message: ".pre-commit-config.yaml was written; git runs its hooks on your Mac at the next commit"},
 		{Name: "editor-tasks", On: KindFile, Path: ".vscode/*", Action: ActNotify,
 			Message: "VS Code settings/tasks changed (can auto-run commands)"},
 		{Name: "idea-config", On: KindFile, Path: ".idea/*", Action: ActNotify,
