@@ -26,7 +26,7 @@ type Event struct {
 	Time     time.Time `json:"time"`
 	Kind     Kind      `json:"kind"`
 	Path     string    `json:"path,omitempty"`     // file: relative to the repo
-	Op       string    `json:"op,omitempty"`       // file: create | write | delete | rename
+	Op       string    `json:"op,omitempty"`       // file: create | write | delete | rename | storm
 	Host     string    `json:"host,omitempty"`     // net: destination host
 	Decision string    `json:"decision,omitempty"` // net: allow | deny
 }
@@ -69,6 +69,10 @@ func Defaults() []Rule {
 			Message: "CI workflow changed"},
 		{Name: "mass-delete", On: KindFile, Op: "delete", Burst: &Burst{Count: 50, Seconds: 10}, Action: ActPause,
 			Message: "many files deleted in a short time"},
+		// macOS reports a burst too large to list as one notice; the
+		// individual events are gone, so treat the notice itself as a burst.
+		{Name: "event-storm", On: KindFile, Op: "storm", Action: ActPause,
+			Message: "too many file changes at once for macOS to list them individually"},
 		// The policy file itself: read-only in the guest, and any write that
 		// slips through (or creates one where none existed) stops the session.
 		{Name: "policy-file", On: KindFile, Path: "llok.yaml", Action: ActPause,

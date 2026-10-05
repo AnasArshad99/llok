@@ -29,6 +29,19 @@ func Start(root string, fn func(path, op string)) (func(), error) {
 	go func() {
 		for batch := range es.Events {
 			for _, ev := range batch {
+				// macOS collapses a burst too large for its queue into one
+				// "scan this subtree" notice, and flags when it dropped
+				// events. Report that as its own operation so a rule can
+				// treat it as the burst it is, rather than silently losing
+				// the individual changes.
+				if ev.Flags&(fsevents.MustScanSubDirs|fsevents.KernelDropped|fsevents.UserDropped) != 0 {
+					rel := strings.TrimPrefix(strings.TrimPrefix(ev.Path, root), "/")
+					if rel == "" {
+						rel = "."
+					}
+					fn(rel, "storm")
+					continue
+				}
 				rel, ok := strings.CutPrefix(ev.Path, root+"/")
 				if !ok || rel == "" || !interesting(rel) {
 					continue
@@ -41,6 +54,9 @@ func Start(root string, fn func(path, op string)) (func(), error) {
 	}()
 	return es.Stop, nil
 }
+
+// Storm is the op reported when macOS coalesced or dropped file events.
+const Storm = "storm"
 
 // interesting drops git's object and index churn but keeps the parts of
 // .git that influence what runs on the host.

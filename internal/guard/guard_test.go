@@ -143,3 +143,21 @@ func TestHeadlessPauseStops(t *testing.T) {
 		t.Errorf("with no one to ask, pause should stop the vm; stopped=%d", m.stopped.Load())
 	}
 }
+
+func TestEventStormPauses(t *testing.T) {
+	m := &fakeMachine{}
+	e := New(Defaults())
+	e.Machine = func() Machine { return m }
+	answered := make(chan struct{}, 1)
+	e.Ask = func(q string, opts []Option) byte { answered <- struct{}{}; return 'r' }
+	e.Observe(Event{Kind: KindFile, Op: "storm", Path: "src"})
+	select {
+	case <-answered:
+	case <-time.After(time.Second):
+		t.Fatal("a coalesced-event notice must pause on its own")
+	}
+	time.Sleep(20 * time.Millisecond)
+	if m.paused.Load() != 1 || m.resumed.Load() != 1 {
+		t.Errorf("paused=%d resumed=%d", m.paused.Load(), m.resumed.Load())
+	}
+}
