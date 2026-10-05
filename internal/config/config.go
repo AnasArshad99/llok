@@ -109,6 +109,24 @@ func (c *Config) GuardRules() []guard.Rule {
 	return guard.Merge(guard.Defaults(), c.Rules)
 }
 
+// MountPathFor is where a repo named name appears inside the VM: its own
+// name at the root, e.g. /career-ops. Characters that would not survive the
+// kernel command line are replaced.
+func MountPathFor(name string) string {
+	clean := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			return r
+		}
+		return '-'
+	}, name)
+	clean = strings.Trim(clean, "-.")
+	if clean == "" {
+		clean = "repo"
+	}
+	return "/" + clean
+}
+
 // Default returns the built-in defaults.
 func Default() *Config {
 	c := &Config{Version: 1, Name: "project", Agent: AgentList{"claude-code"}}
@@ -133,7 +151,7 @@ vm:
   cpus: %d
   memory_mb: %d
 
-# The repo is mounted read-write at this path inside the guest.
+# The repo is mounted read-write at this path inside the VM (default: its name).
 mount:
   repo: %s
 
@@ -166,6 +184,7 @@ func Load(dir string) (*Config, error) {
 	c := Default()
 	abs, _ := filepath.Abs(dir)
 	c.Name = filepath.Base(abs)
+	c.Mount.Repo = MountPathFor(c.Name)
 	data, err := os.ReadFile(filepath.Join(dir, FileName))
 	if errors.Is(err, os.ErrNotExist) {
 		return c, nil

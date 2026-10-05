@@ -47,6 +47,7 @@ func setupRepo(dir string, interactive bool) (*config.Config, error) {
 			return nil, err
 		}
 	}
+	cfg.Mount.Repo = config.MountPathFor(cfg.Name)
 	path := filepath.Join(dir, config.FileName)
 	if err := os.WriteFile(path, cfg.Render(), 0o644); err != nil {
 		return nil, err

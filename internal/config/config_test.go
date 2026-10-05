@@ -30,7 +30,7 @@ func TestLoadMissingUsesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != filepath.Base(dir) || got.Network.Mode != "broker" {
+	if got.Name != filepath.Base(dir) || got.Network.Mode != "broker" || got.Mount.Repo != MountPathFor(got.Name) {
 		t.Errorf("defaults: %+v", got)
 	}
 }
@@ -70,5 +70,15 @@ func TestAgentListScalarAndSequence(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, FileName), []byte("agent: [claude-code, nope]\n"), 0o644)
 	if _, err := Load(dir); err == nil {
 		t.Error("unknown agent in a list should be rejected")
+	}
+}
+
+func TestMountPathFor(t *testing.T) {
+	for in, want := range map[string]string{
+		"career-ops": "/career-ops", "My App": "/My-App", "a/b": "/a-b", "...": "/repo", "": "/repo", "x.y_z": "/x.y_z",
+	} {
+		if got := MountPathFor(in); got != want {
+			t.Errorf("MountPathFor(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

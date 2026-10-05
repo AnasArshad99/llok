@@ -48,6 +48,8 @@ cd your-repo
 llok                # first run asks which agents, writes llok.yaml, then boots
 ```
 
+Inside the VM your folder is at `/<repo name>`, so `my-app` is at `/my-app`.
+
 Inside the VM, run any agent whose provider you have signed in to:
 `claude`, `codex` or `gemini`. Every session carries all your stored
 providers, so you can use several agents in one VM; `agent:` in
@@ -89,7 +91,7 @@ vm:
   cpus: 2
   memory_mb: 1024
 mount:
-  repo: /repo             # where your folder appears inside the VM
+  repo: /my-app           # where your folder appears inside the VM (default: its name)
 network:
   mode: broker            # or "none" for no way out at all
   allow:                  # extra hosts the agent may reach; everything else is refused
