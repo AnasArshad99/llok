@@ -81,6 +81,8 @@ console selects text and copies it to your clipboard.
 | `llok up --plain` | Raw console, no panel |
 | `llok agents` | List agents and which providers are signed in |
 | `llok auth <provider>` | Store a credential: `anthropic` (Claude login or key), `openai` (ChatGPT login or key), `google` (key). Use whichever you have |
+| `llok events` | Follow a running session's feed (`--json` for programs; `--send kill` to stop it) |
+| `llok audit` | Summarise what the broker allowed and refused |
 | `llok doctor` | Check hypervisor support, code signing, guest image |
 | `llok guest build` | Rebuild the VM image (for a newer agent version) |
 
@@ -182,6 +184,34 @@ Matching is indexed, so the cost per event does not grow with the number of
 rules. Every event and every rule outcome is written to a per-session ledger
 under `~/.llok/sessions/<project>/`.
 
+## Event feed
+
+Every session also streams what it sees, live, on a local socket at
+`~/.llok/run/<project>.sock`, one JSON object per line: the session starting
+and ending, each repo path the agent changed, each host the broker allowed
+or refused, each rule that fired, and each pause, resume or kill. A client
+that connects late first receives the recent history. The feed is metadata
+only, never file contents or request bodies.
+
+```bash
+llok events            # readable, one line per event
+llok events --json     # raw lines for your own tooling
+nc -U ~/.llok/run/my-app.sock | jq 'select(.type=="rule")'
+```
+
+```json
+{"seq":7,"time":"2026-10-13T21:13:40Z","type":"file","project":"my-app","path":".git/hooks/pre-commit","op":"write"}
+{"seq":8,"time":"2026-10-13T21:13:40Z","type":"rule","project":"my-app","rule":"git-hooks","action":"pause","path":".git/hooks/pre-commit","op":"write"}
+{"seq":9,"time":"2026-10-13T21:13:40Z","type":"vm","project":"my-app","state":"paused","source":"rule","reason":"git-hooks"}
+```
+
+The same socket takes control lines, `{"op":"pause"}`, `{"op":"resume"}` or
+`{"op":"kill"}`, so a program watching the feed can act on it: a script
+that stops the session when the agent touches a path you care about, or a
+central switch across every llok on the machine. `llok events --send kill`
+does it from the shell. The socket is owner-only (`0600`); anything running
+as you can use it, as it can already use the Keychain entry.
+
 ## How it works
 
 - **Hypervisor.** Apple's Virtualization framework, driven from Go. Boot to a ready shell takes about 0.2 seconds.
@@ -193,9 +223,9 @@ under `~/.llok/sessions/<project>/`.
 
 ## Status
 
-Working today: locked VM, full-screen session, root image with Claude Code, broker with credential injection and audit, graceful shutdown and resize, supervisor rules with pause prompts and a session ledger.
+Working today: locked VM, full-screen session, root image with Claude Code, Codex and Gemini CLI, broker with credential injection and audit, graceful shutdown and resize, supervisor rules with pause prompts, a session ledger, a live event feed with external pause/resume/kill, and hidden paths (`mount.exclude`).
 
-Planned: agent picker with Codex and opencode, approval prompts for risky actions, results returned as a branch, snapshot warm starts, a Linux backend on Firecracker.
+Planned: session limits, read-only sessions, results returned as a branch for review, a headless `llok run --json`, snapshot warm starts, a Linux backend on Firecracker.
 
 ## License
 

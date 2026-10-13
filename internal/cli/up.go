@@ -22,6 +22,7 @@ import (
 	"github.com/AnasArshad99/llok/internal/config"
 	"github.com/AnasArshad99/llok/internal/control"
 	"github.com/AnasArshad99/llok/internal/creds"
+	"github.com/AnasArshad99/llok/internal/events"
 	"github.com/AnasArshad99/llok/internal/guard"
 	"github.com/AnasArshad99/llok/internal/guest"
 	"github.com/AnasArshad99/llok/internal/ui"
@@ -260,6 +261,18 @@ off from the host.`,
 			var machine vm.Machine
 			eng.Machine = func() guard.Machine { return machine }
 			opts.OnStart = func(m vm.Machine) { machine = m }
+			// The live feed: every ledger line and the session's lifecycle,
+			// on a local socket other programs can follow and act on.
+			bus := events.NewBus(cfg.Name)
+			eng.Report = func(ev guard.Event, rule, action string) { bus.Emit(feedEvent(ev, rule, action)) }
+			feed, err := events.Serve(events.SocketPath(home, cfg.Name), bus, socketControl{eng})
+			if err != nil {
+				return err
+			}
+			defer feed.Close()
+			start := events.Event{Type: events.TypeSession, Phase: "start", Agent: agent.Name,
+				Repo: absRepo, VMRepo: cfg.Mount.Repo, PID: os.Getpid()}
+			bus.Emit(start)
 			stopWatch, err := watch.Start(absRepo, func(p, op string) {
 				eng.Observe(guard.Event{Kind: guard.KindFile, Path: p, Op: op})
 			})
@@ -272,6 +285,12 @@ off from the host.`,
 					eng.Observe(guard.Event{Kind: guard.KindNet, Host: e.Host, Decision: e.Decision})
 				}
 			}
+			onMarker := func(m string) {
+				if strings.HasPrefix(m, "LLOK_READY") {
+					bus.Emit(events.Event{Type: events.TypeSession, Phase: "ready"})
+				}
+			}
+			opts.OnMarker = onMarker
 
 			ctl := control.New()
 			var exitMu sync.Mutex
@@ -323,7 +342,8 @@ off from the host.`,
 				opts.Output = sess
 				opts.Input = sess.Input(os.Stdin)
 				opts.Replies = sess.Replies()
-				opts.OnMarker = sess.Marker
+				opts.OnMarker = func(m string) { sess.Marker(m); onMarker(m) }
+				sess.Event("events at " + feed.Path)
 				sess.OnResize = func(cols, rows int) { ctl.Resize(cols, rows) }
 				eng.Notify = sess.Event
 				eng.Ask = func(q string, opts []guard.Option) byte {
@@ -355,6 +375,15 @@ off from the host.`,
 			if sess != nil {
 				sess.Stop()
 			}
+			end := events.Event{Type: events.TypeSession, Phase: "end", DurationMS: res.Duration.Milliseconds(), StoppedBy: eng.StoppedBy()}
+			if err == nil {
+				code := res.ExitCode
+				end.Exit = &code
+			} else {
+				end.Reason = err.Error()
+			}
+			bus.Emit(end)
+			feed.Close()
 			if why := eng.StoppedBy(); why != "" {
 				fmt.Fprintln(os.Stderr, styleErr.Render("llok")+" · vm stopped by the supervisor: "+why)
 				os.Exit(125)
@@ -390,4 +419,38 @@ off from the host.`,
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print the boot summary and run summary")
 	registerDevFlags(cmd)
 	return cmd
+}
+
+// socketControl lets a program on the events socket pause, resume or kill
+// the session through the supervisor, so the panel and ledger see it too.
+type socketControl struct{ eng *guard.Engine }
+
+func (c socketControl) Pause() error  { return c.eng.Pause("socket") }
+func (c socketControl) Resume() error { return c.eng.Resume("socket") }
+func (c socketControl) Kill() error   { return c.eng.Kill("socket") }
+
+// feedEvent maps a ledger line to a feed event: a raw observation, a rule
+// outcome, or a VM state change.
+func feedEvent(ev guard.Event, rule, action string) events.Event {
+	out := events.Event{Time: ev.Time, Path: ev.Path, Op: ev.Op, Host: ev.Host, Decision: ev.Decision}
+	switch {
+	case ev.Kind == guard.KindControl:
+		out.Type, out.State, out.Source = events.TypeVM, action, ev.Host
+		out.Host = ""
+	case rule != "" && action != "paused" && action != "stopped":
+		out.Type, out.Rule, out.Action = events.TypeRule, rule, action
+	case action != "":
+		// paused/stopped (by a rule), resumed/killed (by the user at the prompt)
+		out.Type, out.State, out.Reason = events.TypeVM, action, rule
+		if rule == "" {
+			out.Source = "you"
+		} else {
+			out.Source = "rule"
+		}
+	case ev.Kind == guard.KindFile:
+		out.Type = events.TypeFile
+	default:
+		out.Type = events.TypeNet
+	}
+	return out
 }

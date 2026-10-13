@@ -111,7 +111,11 @@ trusted as data but not as policy.
 
 ## Reporting what you see
 
-`llok audit` summarises what the broker allowed and refused.
+`llok audit` summarises what the broker allowed and refused. `llok events`
+follows the live feed of a running session (`~/.llok/run/<project>.sock`,
+owner-only), which also accepts pause, resume and kill from any process
+running as you; that process already has the Keychain entry and the repo,
+so the socket grants nothing new.
 `~/.llok/audit/broker.jsonl` and `~/.llok/sessions/<project>/` hold the
 full records. They contain hosts, paths and file names, never request
 bodies or credentials.

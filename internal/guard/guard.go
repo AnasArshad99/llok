@@ -6,6 +6,7 @@
 package guard
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -19,6 +20,9 @@ type Kind string
 const (
 	KindFile Kind = "file" // a file in the repo changed (host-side watcher)
 	KindNet  Kind = "net"  // the broker decided on a destination
+	// KindControl marks a state change ordered from outside the session
+	// (the events socket); Host carries the source. Rules never match it.
+	KindControl Kind = "control"
 )
 
 // Event is one observation. Metadata only.
@@ -166,6 +170,10 @@ type Engine struct {
 	// Machine may be set once the VM is running.
 	Machine func() Machine
 	Ledger  *Ledger
+	// Report mirrors every ledger line (raw events, rule outcomes and VM
+	// state changes) to a live feed. rule is "" for raw events and for
+	// state changes that no rule caused; action is "" for raw events.
+	Report func(ev Event, rule, action string)
 
 	rules   []Rule
 	exact   map[Kind]map[string][]int // kind -> exact path/host -> rule indexes
@@ -248,10 +256,10 @@ func (e *Engine) Observe(ev Event) {
 			e.notify("⚠ " + msg)
 		case ActPause:
 			e.record(ev, r.Name, "pause")
-			go e.pause(msg)
+			go e.pause(msg, ev, r.Name)
 		case ActKill:
 			e.record(ev, r.Name, "kill")
-			go e.kill(msg)
+			go e.kill(msg, ev, r.Name)
 		}
 	}
 }
@@ -325,7 +333,7 @@ func (e *Engine) machine() Machine {
 	return e.Machine()
 }
 
-func (e *Engine) pause(msg string) {
+func (e *Engine) pause(msg string, ev Event, rule string) {
 	e.mu.Lock()
 	already := e.paused
 	e.paused = true
@@ -342,27 +350,69 @@ func (e *Engine) pause(msg string) {
 	if e.Ask == nil {
 		e.notify("✗ vm stopped (no one to ask): " + msg)
 		e.markStopped(msg)
+		e.record(ev, rule, "stopped")
 		e.do(m, "stop", Machine.Stop)
 		return
 	}
 	e.do(m, "pause", Machine.Pause)
+	e.record(ev, rule, "paused")
 	e.notify("⏸ paused: " + msg)
 	// Kill needs a capital K so an accidental keypress cannot end the session.
 	k := e.Ask("VM paused: "+msg, []Option{{'r', "resume"}, {'K', "kill"}})
 	if k == 'K' {
 		e.notify("✗ vm killed by you")
 		e.markStopped("killed by you: " + msg)
+		e.record(ev, "", "killed")
 		e.do(m, "stop", Machine.Stop)
 		return
 	}
 	e.do(m, "resume", Machine.Resume)
+	e.record(ev, "", "resumed")
 	e.notify("▶ resumed by you")
 }
 
-func (e *Engine) kill(msg string) {
+func (e *Engine) kill(msg string, ev Event, rule string) {
 	e.notify("✗ vm stopped: " + msg)
 	e.markStopped(msg)
+	e.record(ev, rule, "stopped")
 	e.do(e.machine(), "stop", Machine.Stop)
+}
+
+// Pause, Resume and Kill are the engine's external controls, for a
+// supervisor outside the session (the events socket). They bypass the
+// rule prompt: whoever drives the socket is the one deciding.
+func (e *Engine) Pause(source string) error {
+	return e.external("paused", "⏸ paused by "+source, source, Machine.Pause)
+}
+
+func (e *Engine) Resume(source string) error {
+	return e.external("resumed", "▶ resumed by "+source, source, Machine.Resume)
+}
+
+func (e *Engine) Kill(source string) error {
+	m := e.machine()
+	if m == nil {
+		return errors.New("vm not running")
+	}
+	// Stopping ends the session and its feed, so the decision is recorded
+	// before it is carried out.
+	e.markStopped("killed by " + source)
+	e.record(Event{Kind: KindControl, Host: source}, "", "killed")
+	e.notify("✗ vm killed by " + source)
+	return m.Stop()
+}
+
+func (e *Engine) external(state, msg, source string, op func(Machine) error) error {
+	m := e.machine()
+	if m == nil {
+		return errors.New("vm not running")
+	}
+	if err := op(m); err != nil {
+		return err
+	}
+	e.record(Event{Kind: KindControl, Host: source}, "", state)
+	e.notify(msg)
+	return nil
 }
 
 // do runs a machine operation and surfaces its failure in the panel.
@@ -383,7 +433,13 @@ func (e *Engine) notify(s string) {
 }
 
 func (e *Engine) record(ev Event, rule, action string) {
+	if ev.Time.IsZero() {
+		ev.Time = time.Now()
+	}
 	if e.Ledger != nil {
 		e.Ledger.Write(ev, rule, action)
+	}
+	if e.Report != nil {
+		e.Report(ev, rule, action)
 	}
 }
