@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -36,6 +37,12 @@ type Config struct {
 		Mode  string   `yaml:"mode"`
 		Allow []string `yaml:"allow"`
 	} `yaml:"network"`
+	// Session governs detached sessions: Idle is how long a session may go
+	// with no output, input, file change or request before it powers off
+	// ("off" disables).
+	Session struct {
+		Idle string `yaml:"idle"`
+	} `yaml:"session"`
 	// Rules override or extend the built-in supervisor rules (see guard.Defaults).
 	Rules []guard.Rule `yaml:"rules"`
 	// Agents optionally defines extra agents inline, keyed by name.
@@ -138,6 +145,7 @@ func Default() *Config {
 	c.Mount.Repo = "/repo"
 	c.Mount.Exclude = DefaultExclude()
 	c.Network.Mode = "broker"
+	c.Session.Idle = "2h"
 	return c
 }
 
@@ -177,6 +185,13 @@ network:
   mode: %s
   allow: []
 
+# Sessions keep running when you detach (Ctrl-] d) or close the terminal;
+# llok sessions lists them, llok attach <name> returns. idle: how long one
+# may sit with no output, input, file change or request before it powers
+# itself off. off disables.
+session:
+  idle: %s
+
 # Supervisor rules run on your Mac over what it can see: files the agent
 # changed in the repo and hosts the broker was asked for. Built-in defaults:
 #   git-hooks    pause the VM when .git/hooks/* is written
@@ -189,7 +204,24 @@ network:
 #     action: notify
 #     message: lockfile changed
 rules: []
-`, c.Version, c.Name, c.Agent.Render(), c.VM.CPUs, c.VM.MemoryMB, c.Mount.Repo, renderList(c.Mount.Exclude), c.Network.Mode))
+`, c.Version, c.Name, c.Agent.Render(), c.VM.CPUs, c.VM.MemoryMB, c.Mount.Repo, renderList(c.Mount.Exclude), c.Network.Mode, c.Session.Idle))
+}
+
+// IdleTimeout parses session.idle; zero means disabled.
+func (c *Config) IdleTimeout() (time.Duration, error) {
+	v := strings.TrimSpace(c.Session.Idle)
+	switch v {
+	case "", "off", "0", "none":
+		return 0, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("%s: session.idle %q must be a duration like 2h or 45m, or off", FileName, v)
+	}
+	if d > 0 && d < time.Minute {
+		return 0, fmt.Errorf("%s: session.idle %q is too short (minimum 1m)", FileName, v)
+	}
+	return d, nil
 }
 
 func renderList(items []string) string {
@@ -229,6 +261,9 @@ func Load(dir string) (*Config, error) {
 		if e == "" || strings.HasPrefix(e, "/") || strings.Contains(e, "..") || strings.ContainsAny(e, " \n\t") {
 			return nil, fmt.Errorf("%s: mount.exclude entry %q must be a relative path without spaces or '..'", FileName, e)
 		}
+	}
+	if _, err := c.IdleTimeout(); err != nil {
+		return nil, err
 	}
 	if err := guard.Validate(c.GuardRules()); err != nil {
 		return nil, fmt.Errorf("%s: rules: %w", FileName, err)

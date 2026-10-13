@@ -5,71 +5,59 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/AnasArshad99/llok/internal/config"
 	"github.com/AnasArshad99/llok/internal/events"
 	"github.com/AnasArshad99/llok/internal/guest"
+	"github.com/AnasArshad99/llok/internal/session"
 )
 
 func newEventsCmd() *cobra.Command {
 	var (
-		project string
-		raw     bool
-		send    string
+		name string
+		raw  bool
+		send string
 	)
 	cmd := &cobra.Command{
-		Use:   "events",
+		Use:   "events [session]",
 		Short: "Follow a running session's event feed",
-		Long: `Connects to the live session for the project in the current directory (or
---project) and prints each event as it happens: file changes in the repo,
-broker decisions, supervisor rules, VM state changes. --json prints the raw
-lines, one JSON object each, for other programs. Each session listens on
-~/.llok/run/<project>.sock; any local program can read that socket directly.
+		Long: `Connects to a running session (the one for the repo in the current
+directory, or the only one running, or the named one) and prints each event
+as it happens: file changes in the repo, broker decisions, supervisor rules,
+VM state changes. --json prints the raw lines, one JSON object each, for
+other programs. Each session listens on ~/.llok/run/<session>/events.sock;
+any local program can read that socket directly.
 
 --send pause|resume|kill acts on the session and exits.`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := guest.Home()
 			if err != nil {
 				return err
 			}
-			if project == "" {
-				project, err = projectHere(home)
-				if err != nil {
-					return err
-				}
+			if len(args) == 1 {
+				name = args[0]
 			}
-			path := events.SocketPath(home, project)
-			conn, sc, err := events.Dial(path)
+			name, err = resolveSession(home, name)
 			if err != nil {
-				return fmt.Errorf("no running session for %q (%s)", project, path)
+				return err
 			}
-			defer conn.Close()
 			if send != "" {
 				if send != "pause" && send != "resume" && send != "kill" {
 					return errors.New("--send takes pause, resume or kill")
 				}
-				b, _ := json.Marshal(events.Command{Op: send})
-				if _, err := conn.Write(append(b, '\n')); err != nil {
-					return err
+				if err := sendControl(home, name, send); err != nil {
+					return fmt.Errorf("%s: %w", send, err)
 				}
-				// Wait for the session's answer so an error is reported.
-				for sc.Scan() {
-					var ev events.Event
-					if json.Unmarshal(sc.Bytes(), &ev) == nil && ev.Type == events.TypeControl && ev.Op2 == send {
-						if ev.Reason != "" {
-							return errors.New(send + ": " + ev.Reason)
-						}
-						fmt.Fprintln(cmd.OutOrStdout(), send+": ok")
-						return nil
-					}
-				}
-				return errors.New("session closed before answering")
+				fmt.Fprintln(cmd.OutOrStdout(), send+": ok")
+				return nil
 			}
+			conn, sc, err := events.Dial(session.EventsSocket(home, name))
+			if err != nil {
+				return fmt.Errorf("session %s is not reachable", name)
+			}
+			defer conn.Close()
 			out := cmd.OutOrStdout()
 			for sc.Scan() {
 				if raw {
@@ -86,35 +74,9 @@ lines, one JSON object each, for other programs. Each session listens on
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&project, "project", "", "project name (default: the llok.yaml in this directory)")
 	cmd.Flags().BoolVar(&raw, "json", false, "print raw JSON lines")
 	cmd.Flags().StringVar(&send, "send", "", "send a control command: pause, resume or kill")
 	return cmd
-}
-
-// projectHere names the project from llok.yaml in the working directory,
-// or the only running session when there is exactly one.
-func projectHere(home string) (string, error) {
-	if cfg, err := config.Load("."); err == nil && cfg.Name != "" {
-		if _, err := os.Stat(config.FileName); err == nil {
-			return cfg.Name, nil
-		}
-	}
-	socks, _ := filepath.Glob(filepath.Join(home, "run", "*.sock"))
-	var live []string
-	for _, s := range socks {
-		if c, _, err := events.Dial(s); err == nil {
-			c.Close()
-			live = append(live, strings.TrimSuffix(filepath.Base(s), ".sock"))
-		}
-	}
-	switch len(live) {
-	case 0:
-		return "", errors.New("no running session; run from a repo with llok.yaml or pass --project")
-	case 1:
-		return live[0], nil
-	}
-	return "", fmt.Errorf("several sessions are running (%s); pass --project", strings.Join(live, ", "))
 }
 
 func describeEvent(ev events.Event) string {

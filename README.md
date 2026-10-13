@@ -61,6 +61,21 @@ While a session is open llok owns the mouse, as opencode does: the wheel
 scrolls the VM's own history instead of the terminal, and click-drag in the
 console selects text and copies it to your clipboard.
 
+A session outlives the terminal it was started from. The VM runs in a
+background llok process; your terminal is attached to it. Press Ctrl-] for
+the session menu:
+
+```
+d detach   s switch   n new   K kill   C-] power off   ] send Ctrl-]
+```
+
+Detach, or close the tab, and the VM keeps running with whatever the agent
+was doing. `llok` in the same repo attaches again; `llok sessions` lists
+what is running; `llok attach <name>` joins any of them from any terminal.
+Sessions are named after the project (`my-app`, then `my-app-2`, …) or with
+`llok -s <name>`. A session idle for `session.idle` (two hours by default:
+no output, input, file change or request) powers itself off.
+
 `llok` (or `llok up`) shows the VM console on the left and a live panel on the right: state, repo mapping, VM size, network policy, uptime, and every request the broker allowed or refused.
 
 ```
@@ -75,8 +90,12 @@ console selects text and copies it to your clipboard.
 
 | Command | What it does |
 |---|---|
-| `llok` | Interactive session (same as `llok up`). `exit` powers off, Ctrl-] twice forces it |
+| `llok` | Interactive session (same as `llok up`); attaches if one is running for this repo. `exit` powers off, Ctrl-] opens the session menu |
 | `llok --agent codex` | Same, set up for a different agent than `llok.yaml` says |
+| `llok -s review` | Start (or attach to) a session by name; several can run on one repo |
+| `llok sessions` | List running sessions |
+| `llok attach [name]` | Attach this terminal to a running session |
+| `llok kill [name]` | Stop a session (`--all` for every one) |
 | `llok up -c 'make test'` | Run one command in the VM, return its exit code |
 | `llok up --plain` | Raw console, no panel |
 | `llok agents` | List agents and which providers are signed in |
@@ -106,6 +125,8 @@ network:
   allow:                  # extra hosts the agent may reach; everything else is refused
     - registry.npmjs.org
     - "*.github.com"
+session:
+  idle: 2h                # a detached session this quiet powers itself off (off disables)
 ```
 
 ## What the VM can and cannot do
@@ -187,7 +208,7 @@ under `~/.llok/sessions/<project>/`.
 ## Event feed
 
 Every session also streams what it sees, live, on a local socket at
-`~/.llok/run/<project>.sock`, one JSON object per line: the session starting
+`~/.llok/run/<session>/events.sock`, one JSON object per line: the session starting
 and ending, each repo path the agent changed, each host the broker allowed
 or refused, each rule that fired, and each pause, resume or kill. A client
 that connects late first receives the recent history. The feed is metadata
@@ -196,7 +217,7 @@ only, never file contents or request bodies.
 ```bash
 llok events            # readable, one line per event
 llok events --json     # raw lines for your own tooling
-nc -U ~/.llok/run/my-app.sock | jq 'select(.type=="rule")'
+nc -U ~/.llok/run/my-app/events.sock | jq 'select(.type=="rule")'
 ```
 
 ```json
@@ -218,12 +239,13 @@ as you can use it, as it can already use the Keychain entry.
 - **Guest.** Alpine's `linux-virt` kernel, a 6 MB initramfs with llok's init, and an ext4 root disk holding bash, git, Node, ripgrep and every built-in agent. Sessions mount the disk read-only with a tmpfs overlay and run as an unprivileged user.
 - **Image build.** `llok guest build` boots a one-off builder VM with NAT to install packages. It is the only VM that ever gets a network device, and it never sees a repo. Every input is pinned in `internal/guest/versions.yaml` (Alpine release and kernel package with their SHA-256, each agent's version), so a build is reproducible, and the build writes a manifest with the hash of every artifact. `llok up` refuses an image that does not match its manifest; `llok doctor` hashes everything and lists what is inside.
 - **Broker.** A small agent inside the guest forwards `127.0.0.1:3128` over vsock to llok on the host. Each provider the chosen agent uses is a route: its hosts are terminated with a local CA the guest trusts and the real credential is injected in the header that provider expects. Other allowed hosts get a plain tunnel with nothing injected.
-- **Control channel.** A second vsock port carries resize and shutdown, so window changes reach the agent's UI and Ctrl-] powers the guest off cleanly.
+- **Control channel.** A second vsock port carries resize and shutdown, so window changes reach the agent's UI and a power-off from the menu lets the guest sync and halt cleanly.
+- **Sessions.** A full-screen session runs the VM in a background llok process that keeps the console history, the supervisor and the feed; the terminal is a thin client on `~/.llok/run/<session>/console.sock` that renders the screen and relays keys. Detaching drops the client and nothing else; attaching replays recent output into a fresh emulator and tells the guest its new size so full-screen programs redraw.
 - **Supervisor.** A file watcher on the repo (macOS FSEvents) and the broker's decisions feed an indexed rules engine on the host, which can pause or stop the VM through the Virtualization framework.
 
 ## Status
 
-Working today: locked VM, full-screen session, root image with Claude Code, Codex and Gemini CLI, broker with credential injection and audit, graceful shutdown and resize, supervisor rules with pause prompts, a session ledger, a live event feed with external pause/resume/kill, and hidden paths (`mount.exclude`).
+Working today: locked VM, full-screen session, detached sessions with attach, switch and kill, root image with Claude Code, Codex and Gemini CLI, broker with credential injection and audit, graceful shutdown and resize, supervisor rules with pause prompts, a session ledger, a live event feed with external pause/resume/kill, and hidden paths (`mount.exclude`).
 
 Planned: session limits, read-only sessions, results returned as a branch for review, a headless `llok run --json`, snapshot warm starts, a Linux backend on Firecracker.
 

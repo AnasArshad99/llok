@@ -40,7 +40,9 @@ func newRoot() *cobra.Command {
 			saneTerminal()
 		},
 	}
-	root.AddCommand(newInitCmd(), up, newAuthCmd(), newAuditCmd(), newEventsCmd(), newRulesCmd(), newTrustCmd(), newAgentsCmd(), newGuestCmd(), newDoctorCmd(), newVersionCmd())
+	// Bare llok takes up's flags too (llok --agent codex, llok -s review).
+	root.Flags().AddFlagSet(up.Flags())
+	root.AddCommand(newInitCmd(), up, newAttachCmd(), newSessionsCmd(), newKillCmd(), newServeCmd(), newAuthCmd(), newAuditCmd(), newEventsCmd(), newRulesCmd(), newTrustCmd(), newAgentsCmd(), newGuestCmd(), newDoctorCmd(), newVersionCmd())
 	return root
 }
 

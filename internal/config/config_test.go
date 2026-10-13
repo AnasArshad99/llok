@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefaultRoundTrip(t *testing.T) {
@@ -105,5 +106,22 @@ func TestExcludeDefaultsAndValidation(t *testing.T) {
 	got, _ = Load(dir)
 	if len(got.Mount.Exclude) != 0 {
 		t.Error("an explicit empty list must mean no exclusions")
+	}
+}
+
+func TestIdleTimeout(t *testing.T) {
+	c := Default()
+	if d, err := c.IdleTimeout(); err != nil || d != 2*time.Hour {
+		t.Errorf("default idle: %v %v", d, err)
+	}
+	c.Session.Idle = "off"
+	if d, _ := c.IdleTimeout(); d != 0 {
+		t.Error("off must disable")
+	}
+	for _, bad := range []string{"soon", "10s", "-1h"} {
+		c.Session.Idle = bad
+		if _, err := c.IdleTimeout(); err == nil {
+			t.Errorf("%q should be rejected", bad)
+		}
 	}
 }

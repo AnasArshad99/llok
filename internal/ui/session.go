@@ -33,6 +33,9 @@ type Info struct {
 	CPUs      uint
 	MemoryMB  uint64
 	Kernel    string
+	Session   string    // session name, when the VM runs detached from this terminal
+	Started   time.Time // when the VM started (zero: now)
+	Others    int       // other sessions running on this machine
 }
 
 // Session owns the terminal while the VM runs.
@@ -254,23 +257,47 @@ func clamp(v, lo, hi int) int {
 
 // Option is one answer a prompt offers.
 type Option struct {
-	Key   byte
-	Label string
+	Key   byte   `json:"key"`
+	Label string `json:"label"`
+	Show  string `json:"show,omitempty"` // how the key is displayed, when not the key itself
 }
 
 type prompt struct {
 	question string
 	opts     []Option
 	answer   chan byte
+	menu     bool // any other key dismisses it (answer 0)
 }
 
 // Ask shows a question in the panel, rings the bell, and blocks until one
 // of the option keys is pressed. Keys are not forwarded to the guest while
 // a prompt is showing.
 func (s *Session) Ask(question string, opts []Option) byte {
+	return s.ask(question, opts, false)
+}
+
+// Menu is a prompt any other key dismisses; it returns 0 then.
+func (s *Session) Menu(question string, opts []Option) byte {
+	return s.ask(question, opts, true)
+}
+
+// CancelPrompt dismisses the current prompt, if any, with answer 0.
+func (s *Session) CancelPrompt() {
+	s.mu.Lock()
+	p := s.prompt
+	s.mu.Unlock()
+	if p != nil {
+		select {
+		case p.answer <- 0:
+		default:
+		}
+	}
+}
+
+func (s *Session) ask(question string, opts []Option, menu bool) byte {
 	s.promptMu.Lock()
 	defer s.promptMu.Unlock()
-	p := &prompt{question: question, opts: opts, answer: make(chan byte, 1)}
+	p := &prompt{question: question, opts: opts, answer: make(chan byte, 1), menu: menu}
 	s.mu.Lock()
 	s.prompt = p
 	s.dirty = true
@@ -302,7 +329,30 @@ func (s *Session) promptKey(b byte) bool {
 			return true
 		}
 	}
+	if p.menu {
+		select {
+		case p.answer <- 0:
+		default:
+		}
+	}
 	return true
+}
+
+// SetState sets the VM state shown in the panel (booting, running, paused,
+// stopped), for a client that attaches to a session already under way.
+func (s *Session) SetState(state string) {
+	s.mu.Lock()
+	s.state = state
+	s.dirty = true
+	s.mu.Unlock()
+}
+
+// SetOthers updates the count of other running sessions.
+func (s *Session) SetOthers(n int) {
+	s.mu.Lock()
+	s.info.Others = n
+	s.dirty = true
+	s.mu.Unlock()
 }
 
 func (s *Session) hasPrompt() bool {
@@ -368,10 +418,16 @@ func New(info Info) *Session {
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
 	}
+	if !info.Started.IsZero() {
+		s.start = info.Started
+	}
 	s.layout()
 	s.emu = vt.NewSafeEmulator(s.consoleW, s.rows)
 	return s
 }
+
+// TermSize is the host terminal's size, with a sane fallback.
+func TermSize() (cols, rows int) { return termSize() }
 
 func termSize() (cols, rows int) {
 	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
@@ -404,7 +460,6 @@ func (s *Session) ConsoleSize() (cols, rows int) { return s.consoleW, s.rows }
 // of the window instead of on a clean full screen.
 func (s *Session) Start() {
 	fmt.Fprint(s.out, termReset+"\x1b[?1049h"+termReset+"\x1b[?25l\x1b[2J\x1b[H"+mouseOn)
-	s.event("vm starting")
 	go s.loop()
 }
 
@@ -549,8 +604,21 @@ func clean(t string) string {
 	}, t)
 }
 
-func (s *Session) eventLocked(e string) {
-	ts := time.Since(s.start).Round(time.Second)
+// EventAt appends an activity line stamped with when it happened, for
+// lines replayed from a session that started before this terminal joined.
+func (s *Session) EventAt(at time.Time, e string) {
+	s.mu.Lock()
+	s.eventAtLocked(at, e)
+	s.mu.Unlock()
+}
+
+func (s *Session) eventLocked(e string) { s.eventAtLocked(time.Now(), e) }
+
+func (s *Session) eventAtLocked(at time.Time, e string) {
+	ts := at.Sub(s.start).Round(time.Second)
+	if ts < 0 {
+		ts = 0
+	}
 	s.events = append(s.events, sFaint.Render(fmtDur(ts))+" "+sDim.Render(clean(e)))
 	if len(s.events) > 200 {
 		s.events = s.events[len(s.events)-200:]
@@ -693,8 +761,15 @@ func (s *Session) panelLines() []string {
 	if s.prompt != nil {
 		lines = append(lines, s.promptLines()...)
 	}
+	lines = append(lines, sep)
+	if s.info.Session != "" {
+		ses := s.info.Session
+		if s.info.Others > 0 {
+			ses += sDim.Render(fmt.Sprintf(" +%d more", s.info.Others))
+		}
+		lines = append(lines, kv("session", ses))
+	}
 	lines = append(lines,
-		sep,
 		kv("project", s.info.Project),
 		kv("agent", s.info.Agent),
 		kv("repo", shortPath(s.info.RepoHost, s.panelW-11)),
@@ -707,7 +782,16 @@ func (s *Session) panelLines() []string {
 		kv("boot", boot),
 		sep,
 		kv("exit", "power off"),
-		kv("C-] ×2", "force off"),
+	)
+	if s.info.Session != "" {
+		lines = append(lines,
+			kv("C-]", "d detach · s switch"),
+			kv("", "n new · K kill · C-] off"),
+		)
+	} else {
+		lines = append(lines, kv("C-] ×2", "force off"))
+	}
+	lines = append(lines,
 		kv("wheel", "scroll history"),
 		kv("drag", "select · copies"),
 	)
@@ -759,9 +843,15 @@ func (s *Session) promptLines() []string {
 	}
 	var keys []string
 	for _, o := range s.prompt.opts {
-		keys = append(keys, fmt.Sprintf("[%c] %s", o.Key, o.Label))
+		show := o.Show
+		if show == "" {
+			show = string(o.Key)
+		}
+		keys = append(keys, fmt.Sprintf("[%s] %s", show, o.Label))
 	}
-	out = append(out, " "+box.Render(" "+strings.Join(keys, "  ")))
+	for _, l := range wrap(strings.Join(keys, "  "), w-2) {
+		out = append(out, " "+box.Render(" "+l))
+	}
 	return out
 }
 

@@ -53,6 +53,12 @@ type Options struct {
 	// ExitCode, when set, is consulted after the VM stops and overrides the
 	// console marker (which any guest process could forge).
 	ExitCode func() (code int, ok bool)
+	// PowerOff carries power-off requests from elsewhere (a detached
+	// session's client): same effect as Ctrl-] twice.
+	PowerOff <-chan struct{}
+	// NoEscape leaves Ctrl-] Ctrl-] in the input stream instead of treating
+	// it as the power-off chord; the session client handles the prefix.
+	NoEscape bool
 }
 
 // Machine lets a supervisor pause, resume or stop the running VM.
@@ -312,7 +318,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			if n > 0 {
 				chunk := buf[:n]
 				for _, b := range chunk {
-					if b == escapeKey && prevEsc {
+					if b == escapeKey && prevEsc && !o.NoEscape {
 						select {
 						case forceStop <- struct{}{}:
 						default:
@@ -403,6 +409,8 @@ func Run(ctx context.Context, o Options) (Result, error) {
 				running = false
 			}
 		case <-forceStop:
+			stopGuest()
+		case <-o.PowerOff:
 			stopGuest()
 		case <-ctx.Done():
 			stopGuest()

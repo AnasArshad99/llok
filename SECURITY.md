@@ -112,10 +112,15 @@ trusted as data but not as policy.
 ## Reporting what you see
 
 `llok audit` summarises what the broker allowed and refused. `llok events`
-follows the live feed of a running session (`~/.llok/run/<project>.sock`,
+follows the live feed of a running session (`~/.llok/run/<session>/events.sock`,
 owner-only), which also accepts pause, resume and kill from any process
 running as you; that process already has the Keychain entry and the repo,
-so the socket grants nothing new.
+so the socket grants nothing new. The console socket next to it
+(`console.sock`, also owner-only) is what `llok attach` uses: it carries
+the guest's console bytes and your keystrokes, nothing from the host.
+A detached session keeps running with the same policy, supervisor and
+feed as an attached one; a rule that pauses the VM while nobody is attached
+leaves it paused until someone attaches and answers.
 `~/.llok/audit/broker.jsonl` and `~/.llok/sessions/<project>/` hold the
 full records. They contain hosts, paths and file names, never request
 bodies or credentials.
