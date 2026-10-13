@@ -57,6 +57,10 @@ providers, so you can use several agents in one VM; `agent:` in
 for one run. `llok agents` lists agents and sign-in state. `llok init`
 writes the policy file without booting; `llok init --force` regenerates it.
 
+While a session is open llok owns the mouse, as opencode does: the wheel
+scrolls the VM's own history instead of the terminal, and click-drag in the
+console selects text and copies it to your clipboard.
+
 `llok` (or `llok up`) shows the VM console on the left and a live panel on the right: state, repo mapping, VM size, network policy, uptime, and every request the broker allowed or refused.
 
 ```

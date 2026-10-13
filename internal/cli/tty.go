@@ -28,6 +28,6 @@ func saneTerminal() {
 	// Also leave the alternate screen in case it was never exited, and clear
 	// any scroll region or origin mode a previous program left behind.
 	if term.IsTerminal(int(os.Stdout.Fd())) {
-		os.Stdout.WriteString("\x1b[?25h\x1b[?1049l\x1b[r\x1b[?6l\x1b[4l\x1b[?7h")
+		os.Stdout.WriteString("\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?25h\x1b[?1049l\x1b[r\x1b[?6l\x1b[4l\x1b[?7h")
 	}
 }

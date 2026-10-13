@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 	"golang.org/x/term"
@@ -63,6 +64,191 @@ type Session struct {
 
 	promptMu sync.Mutex // serialises prompts
 	prompt   *prompt
+
+	sel  selection
+	copy func(string) error // clipboard writer; replaced in tests
+}
+
+// selection is a click-drag range in console-pane cells of the current
+// view (live screen or scrolled-back history).
+type selection struct {
+	active   bool
+	dragging bool
+	ax, ay   int // anchor (where the button went down)
+	bx, by   int // current end
+}
+
+// bounds returns the selection as (top-left, bottom-right) in reading order.
+func (sl selection) bounds() (sx, sy, ex, ey int) {
+	sx, sy, ex, ey = sl.ax, sl.ay, sl.bx, sl.by
+	if sy > ey || (sy == ey && sx > ex) {
+		sx, sy, ex, ey = ex, ey, sx, sy
+	}
+	return
+}
+
+// contains reports whether cell (x, y) is inside the selection.
+func (sl selection) contains(x, y int) bool {
+	if !sl.active {
+		return false
+	}
+	sx, sy, ex, ey := sl.bounds()
+	switch {
+	case y < sy || y > ey:
+		return false
+	case y == sy && y == ey:
+		return x >= sx && x <= ex
+	case y == sy:
+		return x >= sx
+	case y == ey:
+		return x <= ex
+	}
+	return true
+}
+
+func (s *Session) selectStart(x, y int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if x >= s.consoleW || y >= s.rows {
+		s.sel = selection{}
+		s.dirty = true
+		return // clicks on the panel clear any selection
+	}
+	s.sel = selection{active: true, dragging: true, ax: x, ay: y, bx: x, by: y}
+	s.dirty = true
+}
+
+func (s *Session) selectExtend(x, y int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.sel.dragging {
+		return
+	}
+	s.sel.bx, s.sel.by = clamp(x, 0, s.consoleW-1), clamp(y, 0, s.rows-1)
+	s.dirty = true
+}
+
+// selectFinish ends a drag and copies the selected text. A click with no
+// drag just clears the selection.
+func (s *Session) selectFinish(x, y int) {
+	s.mu.Lock()
+	if !s.sel.dragging {
+		s.mu.Unlock()
+		return
+	}
+	s.sel.dragging = false
+	s.sel.bx, s.sel.by = clamp(x, 0, s.consoleW-1), clamp(y, 0, s.rows-1)
+	if s.sel.ax == s.sel.bx && s.sel.ay == s.sel.by {
+		s.sel = selection{}
+		s.dirty = true
+		s.mu.Unlock()
+		return
+	}
+	text := s.selectedTextLocked()
+	s.dirty = true
+	s.mu.Unlock()
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	cp := s.copy
+	if cp == nil {
+		cp = copyToClipboard
+	}
+	if err := cp(text); err != nil {
+		s.event("! copy failed: " + err.Error())
+		return
+	}
+	s.event(fmt.Sprintf("copied %d chars", len([]rune(text))))
+}
+
+func (s *Session) clearSelection() {
+	s.mu.Lock()
+	if s.sel.active {
+		s.sel = selection{}
+		s.dirty = true
+	}
+	s.mu.Unlock()
+}
+
+// cellText returns the text of one cell in the current view, "" for a
+// wide-character continuation or out of range.
+func (s *Session) cellText(x, y int) string {
+	n := s.emu.ScrollbackLen()
+	idx := n - s.scroll + y // absolute line index in scrollback+screen
+	var c *uv.Cell
+	if idx < n {
+		c = s.emu.ScrollbackCellAt(x, idx)
+	} else {
+		c = s.emu.CellAt(x, idx-n)
+	}
+	if c == nil || c.Width == 0 {
+		return ""
+	}
+	if c.Content == "" {
+		return " "
+	}
+	return c.Content
+}
+
+// selectedTextLocked joins the selected cells, one line per row, trailing
+// spaces trimmed.
+func (s *Session) selectedTextLocked() string {
+	sx, sy, ex, ey := s.sel.bounds()
+	var lines []string
+	for y := sy; y <= ey; y++ {
+		from, to := 0, s.consoleW-1
+		if y == sy {
+			from = sx
+		}
+		if y == ey {
+			to = ex
+		}
+		var b strings.Builder
+		for x := from; x <= to; x++ {
+			b.WriteString(s.cellText(x, y))
+		}
+		lines = append(lines, strings.TrimRight(b.String(), " "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// highlightedRow re-renders one console row from its cells with the
+// selected range in reverse video.
+func (s *Session) highlightedRow(y int) string {
+	var b strings.Builder
+	n := s.emu.ScrollbackLen()
+	idx := n - s.scroll + y
+	for x := 0; x < s.consoleW; x++ {
+		var c *uv.Cell
+		if idx < n {
+			c = s.emu.ScrollbackCellAt(x, idx)
+		} else {
+			c = s.emu.CellAt(x, idx-n)
+		}
+		if c == nil || c.Width == 0 {
+			continue
+		}
+		text := c.Content
+		if text == "" {
+			text = " "
+		}
+		if s.sel.contains(x, y) {
+			b.WriteString("\x1b[7m" + text + "\x1b[27m")
+		} else {
+			b.WriteString(c.Style.Styled(text))
+		}
+	}
+	return b.String()
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // Option is one answer a prompt offers.
@@ -216,7 +402,7 @@ func (s *Session) ConsoleSize() (cols, rows int) { return s.consoleW, s.rows }
 // absolute cursor move would then land inside that strip at the bottom
 // of the window instead of on a clean full screen.
 func (s *Session) Start() {
-	fmt.Fprint(s.out, termReset+"\x1b[?1049h"+termReset+"\x1b[?25l\x1b[2J\x1b[H")
+	fmt.Fprint(s.out, termReset+"\x1b[?1049h"+termReset+"\x1b[?25l\x1b[2J\x1b[H"+mouseOn)
 	s.event("vm starting")
 	go s.loop()
 }
@@ -229,7 +415,7 @@ const termReset = "\x1b[r\x1b[?6l\x1b[4l\x1b[?7h"
 func (s *Session) Stop() {
 	close(s.stop)
 	<-s.done
-	fmt.Fprint(s.out, termReset+"\x1b[?25h\x1b[?1049l"+termReset)
+	fmt.Fprint(s.out, mouseOff+termReset+"\x1b[?25h\x1b[?1049l"+termReset)
 }
 
 // Write feeds guest console bytes into the emulator.
@@ -409,6 +595,14 @@ func (s *Session) render(force bool) {
 	s.dirty = false
 
 	lines := s.consoleLines()
+	if s.sel.active {
+		_, sy, _, ey := s.sel.bounds()
+		for y := sy; y <= ey && y < len(lines); y++ {
+			if y >= 0 {
+				lines[y] = s.highlightedRow(y)
+			}
+		}
+	}
 	panel := s.panelLines()
 
 	var b strings.Builder
@@ -505,6 +699,8 @@ func (s *Session) panelLines() []string {
 		sep,
 		kv("exit", "power off"),
 		kv("C-] ×2", "force off"),
+		kv("wheel", "scroll history"),
+		kv("drag", "select · copies"),
 	)
 	lines = append(lines,
 		sep,
