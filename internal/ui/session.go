@@ -50,6 +50,7 @@ type Session struct {
 	state    string // booting | running | stopped
 	bootTime string
 	rootfs   string
+	hidden   int // paths actually covered inside the guest
 	exitCode int
 	events   []string
 	start    time.Time
@@ -493,6 +494,14 @@ func (s *Session) Marker(m string) {
 		if i := strings.Index(m, "rootfs="); i >= 0 {
 			s.rootfs = clean(m[i+7:])
 		}
+		if i := strings.Index(m, "hidden="); i >= 0 {
+			if n, err := strconv.Atoi(strings.TrimSpace(m[i+7:])); err == nil {
+				s.hidden = n
+				if n > 0 {
+					s.eventLocked(fmt.Sprintf("%d path(s) hidden from the agent", n))
+				}
+			}
+		}
 	case strings.HasPrefix(m, "LLOK_READY"):
 		s.state = "running"
 		if i := strings.Index(m, "uptime="); i >= 0 {
@@ -689,7 +698,7 @@ func (s *Session) panelLines() []string {
 		kv("project", s.info.Project),
 		kv("agent", s.info.Agent),
 		kv("repo", shortPath(s.info.RepoHost, s.panelW-11)),
-		kv("mount", s.info.RepoVM+sDim.Render(" rw")),
+		kv("mount", s.info.RepoVM+sDim.Render(" rw")+s.hiddenDesc()),
 		kv("vm", fmt.Sprintf("%d vCPU · %s", s.info.CPUs, mem)),
 		kv("kernel", s.info.Kernel),
 		kv("rootfs", shortRootfs(s.rootfs)),
@@ -717,6 +726,13 @@ func (s *Session) panelLines() []string {
 		}
 	}
 	return lines
+}
+
+func (s *Session) hiddenDesc() string {
+	if s.hidden > 0 {
+		return sWarn.Render(fmt.Sprintf(" · %d hidden", s.hidden))
+	}
+	return ""
 }
 
 func (s *Session) networkDesc() string {

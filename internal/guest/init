@@ -90,6 +90,28 @@ fi
 MOUNT_STATE="virtiofs, rw"
 mountpoint -q "$REPO" || MOUNT_STATE="FAILED"
 
+# Paths the policy hides from the agent (/run/llok/exclude.txt, one glob per
+# line, relative to the repo): cover each match with an empty read-only file
+# or folder. Root does this before the session drops to the agent user, who
+# cannot undo a mount. The host's files are untouched.
+if [ -f /run/llok/exclude.txt ]; then
+  : > /run/llok-empty-file
+  mkdir -p /run/llok-empty-dir
+  HIDDEN=0
+  while read -r pat; do
+    [ -n "$pat" ] || continue
+    for target in "$REPO"/$pat; do
+      [ -e "$target" ] || continue
+      if [ -d "$target" ]; then
+        mount --bind /run/llok-empty-dir "$target" && mount -o remount,bind,ro "$target" "$target" && HIDDEN=$((HIDDEN+1))
+      else
+        mount --bind /run/llok-empty-file "$target" && mount -o remount,bind,ro "$target" "$target" && HIDDEN=$((HIDDEN+1))
+      fi
+    done
+  done < /run/llok/exclude.txt
+  marker "LLOK_INFO hidden=$HIDDEN"
+fi
+
 # The policy file is the host's, not the agent's: pin it read-only inside
 # the guest so the session cannot edit or remove it (the host re-reads it
 # only at the next llok up, and the supervisor pauses on writes as backstop).

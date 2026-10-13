@@ -17,7 +17,27 @@ import (
 
 // widens reports whether cfg grants anything beyond llok's defaults.
 func widens(cfg *config.Config) bool {
-	return len(cfg.Network.Allow) > 0 || len(cfg.Rules) > 0
+	return len(cfg.Network.Allow) > 0 || len(cfg.Rules) > 0 || len(droppedExcludes(cfg)) > 0
+}
+
+// droppedExcludes lists default mount.exclude patterns the policy no longer
+// hides: each one exposes files on the user's Mac that llok hides by default.
+func droppedExcludes(cfg *config.Config) []string {
+	have := map[string]bool{}
+	for _, e := range cfg.Mount.Exclude {
+		have[e] = true
+	}
+	var dropped []string
+	for _, d := range config.DefaultExclude() {
+		if !have[d] {
+			dropped = append(dropped, d)
+		}
+	}
+	return dropped
+}
+
+func fingerprint(cfg *config.Config) string {
+	return trust.Fingerprint(cfg.Network.Allow, cfg.Rules, cfg.Mount.Exclude)
 }
 
 func trustStore() (*trust.Store, error) {
@@ -47,6 +67,12 @@ func describePolicy(cfg *config.Config) string {
 			}
 		}
 	}
+	if d := droppedExcludes(cfg); len(d) > 0 {
+		b.WriteString("  files hidden by default that the agent may now read:\n")
+		for _, e := range d {
+			b.WriteString("    " + styleWarn.Render(e) + "\n")
+		}
+	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -60,7 +86,7 @@ func ensureTrusted(cfg *config.Config, absRepo string) error {
 	if err != nil {
 		return err
 	}
-	fp := trust.Fingerprint(cfg.Network.Allow, cfg.Rules)
+	fp := fingerprint(cfg)
 	if store.Approved(absRepo, fp) {
 		return nil
 	}
@@ -112,7 +138,7 @@ policy's content, so any later change asks again. --revoke forgets it.`,
 				fmt.Fprintln(os.Stderr, ok(config.FileName+" uses only llok's defaults; nothing to approve"))
 				return nil
 			}
-			fp := trust.Fingerprint(cfg.Network.Allow, cfg.Rules)
+			fp := fingerprint(cfg)
 			if store.Approved(absRepo, fp) {
 				fmt.Fprintln(os.Stderr, ok("already approved"))
 				return nil

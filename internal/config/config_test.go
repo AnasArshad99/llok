@@ -82,3 +82,28 @@ func TestMountPathFor(t *testing.T) {
 		}
 	}
 }
+
+func TestExcludeDefaultsAndValidation(t *testing.T) {
+	dir := t.TempDir()
+	c := Default()
+	c.Name = "x"
+	os.WriteFile(filepath.Join(dir, FileName), c.Render(), 0o644)
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Mount.Exclude) != len(DefaultExclude()) || got.Mount.Exclude[0] != ".env" {
+		t.Errorf("exclude round trip: %v", got.Mount.Exclude)
+	}
+	for _, bad := range []string{"/etc", "../x", "a b"} {
+		os.WriteFile(filepath.Join(dir, FileName), []byte("mount:\n  exclude: [\""+bad+"\"]\n"), 0o644)
+		if _, err := Load(dir); err == nil {
+			t.Errorf("exclude %q should be rejected", bad)
+		}
+	}
+	os.WriteFile(filepath.Join(dir, FileName), []byte("mount:\n  exclude: []\n"), 0o644)
+	got, _ = Load(dir)
+	if len(got.Mount.Exclude) != 0 {
+		t.Error("an explicit empty list must mean no exclusions")
+	}
+}

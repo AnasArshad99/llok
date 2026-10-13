@@ -41,16 +41,22 @@ func Open(path string) (*Store, error) {
 }
 
 // Fingerprint hashes the widening parts of a policy. allow is the host
-// allowlist; rules is any representation of the rule overrides (JSON).
-func Fingerprint(allow []string, rules any) string {
+// allowlist; rules is any representation of the rule overrides (JSON);
+// exclude is the mount.exclude list (dropping a default exposes files).
+func Fingerprint(allow []string, rules any, exclude []string) string {
 	a := append([]string(nil), allow...)
 	sort.Strings(a)
+	e := append([]string(nil), exclude...)
+	sort.Strings(e)
 	rb, _ := json.Marshal(rules)
 	h := sha256.New()
 	ab, _ := json.Marshal(a)
 	h.Write(ab)
 	h.Write([]byte{0})
 	h.Write(rb)
+	h.Write([]byte{0})
+	eb, _ := json.Marshal(e)
+	h.Write(eb)
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 

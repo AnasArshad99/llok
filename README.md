@@ -96,6 +96,9 @@ vm:
   memory_mb: 1024
 mount:
   repo: /my-app           # where your folder appears inside the VM (default: its name)
+  exclude:                # repo paths the agent must not see (shell globs)
+    - .env                # default: .env, .env.*, *.pem, *.key
+    - secrets
 network:
   mode: broker            # or "none" for no way out at all
   allow:                  # extra hosts the agent may reach; everything else is refused
@@ -107,7 +110,8 @@ network:
 
 | | |
 |---|---|
-| Read and write your repo | yes, and only your repo |
+| Read and write your repo | yes, and only your repo, minus `mount.exclude` |
+| Read `.env` or anything under `mount.exclude` | no. Inside the VM those paths are empty and read-only; the agent cannot fill, remove or uncover them |
 | Reach the provider API | yes, through the broker, with your credential injected there |
 | Reach any other host | only if listed under `network.allow` |
 | See your credentials | no. The VM holds a placeholder; the broker swaps it on the way out |

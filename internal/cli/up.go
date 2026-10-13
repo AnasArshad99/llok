@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -149,10 +150,22 @@ off from the host.`,
 				}
 			}
 
+			// A per-session read-only share carries llok's files for the guest:
+			// the exclude list, and in broker mode the CA and the agent env.
+			home0, _ := guest.Home()
+			os.MkdirAll(filepath.Join(home0, "share"), 0o755)
+			shareDir, err := os.MkdirTemp(filepath.Join(home0, "share"), "session-")
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(shareDir)
+			if err := os.WriteFile(filepath.Join(shareDir, "exclude.txt"), []byte(strings.Join(cfg.Mount.Exclude, "\n")+"\n"), 0o644); err != nil {
+				return err
+			}
+
 			// The broker: only way out of the VM. Needs credentials for the
 			// agent's providers (at least the primary one).
 			var brk *broker.Broker
-			var shareDir string
 			var session agents.Session
 			if cfg.Network.Mode == "broker" {
 				var lookupErr error
@@ -203,17 +216,6 @@ off from the host.`,
 					return fmt.Errorf("broker CA: %w", err)
 				}
 				brk.CA = ca
-				// A per-session read-only share carries the CA and the agent's
-				// environment (placeholders only, never real secrets).
-				shareDir, err = os.MkdirTemp(filepath.Join(home, "share"), "session-")
-				if err != nil {
-					os.MkdirAll(filepath.Join(home, "share"), 0o755)
-					shareDir, err = os.MkdirTemp(filepath.Join(home, "share"), "session-")
-					if err != nil {
-						return err
-					}
-				}
-				defer os.RemoveAll(shareDir)
 				if err := os.WriteFile(filepath.Join(shareDir, "ca.pem"), ca.PEM, 0o644); err != nil {
 					return err
 				}
@@ -291,8 +293,8 @@ off from the host.`,
 			}
 			opts.GracefulStop = func() bool { return ctl.Shutdown() == nil }
 			opts.AgentBinary = agent.Binary
+			opts.ShareDir = shareDir
 			if brk != nil {
-				opts.ShareDir = shareDir
 				opts.Broker = true
 				opts.Vsock[3128] = func(l net.Listener) { brk.Serve(l) }
 			}

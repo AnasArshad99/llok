@@ -28,6 +28,9 @@ type Config struct {
 	} `yaml:"vm"`
 	Mount struct {
 		Repo string `yaml:"repo"`
+		// Exclude lists repo paths (relative, shell globs) hidden inside the
+		// VM: covered with an empty read-only file or folder.
+		Exclude []string `yaml:"exclude"`
 	} `yaml:"mount"`
 	Network struct {
 		Mode  string   `yaml:"mode"`
@@ -133,8 +136,14 @@ func Default() *Config {
 	c.VM.CPUs = 2
 	c.VM.MemoryMB = 1024
 	c.Mount.Repo = "/repo"
+	c.Mount.Exclude = DefaultExclude()
 	c.Network.Mode = "broker"
 	return c
+}
+
+// DefaultExclude is what new repos hide from the agent: local secrets.
+func DefaultExclude() []string {
+	return []string{".env", ".env.*", "*.pem", "*.key"}
 }
 
 // Render writes the config as a commented llok.yaml.
@@ -152,8 +161,12 @@ vm:
   memory_mb: %d
 
 # The repo is mounted read-write at this path inside the VM (default: its name).
+# exclude: paths (relative to the repo, shell globs) the agent must not see.
+# They appear empty and read-only inside the VM; the files on your Mac are
+# untouched. Set exclude: [] to share everything.
 mount:
   repo: %s
+  exclude: %s
 
 # The guest has no network device. Its only way out is the llok broker on
 # the host, which lets the agent reach its provider API with your credential
@@ -176,7 +189,18 @@ network:
 #     action: notify
 #     message: lockfile changed
 rules: []
-`, c.Version, c.Name, c.Agent.Render(), c.VM.CPUs, c.VM.MemoryMB, c.Mount.Repo, c.Network.Mode))
+`, c.Version, c.Name, c.Agent.Render(), c.VM.CPUs, c.VM.MemoryMB, c.Mount.Repo, renderList(c.Mount.Exclude), c.Network.Mode))
+}
+
+func renderList(items []string) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	q := make([]string, len(items))
+	for i, it := range items {
+		q[i] = `"` + it + `"`
+	}
+	return "[" + strings.Join(q, ", ") + "]"
 }
 
 // Load reads llok.yaml from dir, falling back to defaults when absent.
@@ -200,6 +224,11 @@ func Load(dir string) (*Config, error) {
 	}
 	if c.Network.Mode != "none" && c.Network.Mode != "broker" {
 		return nil, fmt.Errorf("%s: network.mode must be \"broker\" or \"none\"", FileName)
+	}
+	for _, e := range c.Mount.Exclude {
+		if e == "" || strings.HasPrefix(e, "/") || strings.Contains(e, "..") || strings.ContainsAny(e, " \n\t") {
+			return nil, fmt.Errorf("%s: mount.exclude entry %q must be a relative path without spaces or '..'", FileName, e)
+		}
 	}
 	if err := guard.Validate(c.GuardRules()); err != nil {
 		return nil, fmt.Errorf("%s: rules: %w", FileName, err)

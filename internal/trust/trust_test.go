@@ -6,12 +6,12 @@ import (
 )
 
 func TestFingerprintAndStore(t *testing.T) {
-	a := Fingerprint([]string{"b.com", "a.com"}, nil)
-	b := Fingerprint([]string{"a.com", "b.com"}, nil)
+	a := Fingerprint([]string{"b.com", "a.com"}, nil, nil)
+	b := Fingerprint([]string{"a.com", "b.com"}, nil, nil)
 	if a != b {
 		t.Error("allow order must not change the fingerprint")
 	}
-	if Fingerprint([]string{"a.com"}, nil) == Fingerprint([]string{"a.com"}, []string{"rule"}) {
+	if Fingerprint([]string{"a.com"}, nil, nil) == Fingerprint([]string{"a.com"}, []string{"rule"}, nil) {
 		t.Error("rules must change the fingerprint")
 	}
 
@@ -30,7 +30,7 @@ func TestFingerprintAndStore(t *testing.T) {
 	if !s2.Approved("/r", a) {
 		t.Error("approval should persist")
 	}
-	if s2.Approved("/r", Fingerprint([]string{"c.com"}, nil)) {
+	if s2.Approved("/r", Fingerprint([]string{"c.com"}, nil, nil)) {
 		t.Error("a changed policy must not be approved")
 	}
 	s2.Revoke("/r")

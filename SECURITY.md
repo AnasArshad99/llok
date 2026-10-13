@@ -54,6 +54,13 @@ trusted as data but not as policy.
   once per repo before they take effect, and again after any change. Inside
   the guest the file is mounted read-only, so the agent cannot edit or
   remove it, and a write to it pauses the session as a backstop.
+- **Secrets kept in the repo folder.** Paths under `mount.exclude` (`.env`,
+  `.env.*`, `*.pem`, `*.key` by default) are covered inside the guest by an
+  empty read-only file or folder before the session drops to the agent
+  user. The agent sees the name and nothing else; a write fails and the
+  cover cannot be removed without root. The files on your Mac are never
+  touched. A cloned `llok.yaml` that drops a default exclusion must be
+  approved like any other widening.
 - **Repo files that execute on your Mac later.** The supervisor watches the
   repo from the host and pauses the VM when the agent writes git hooks,
   `.git/config`, or `.envrc`, and notifies on CI, editor and git attribute
@@ -72,8 +79,8 @@ trusted as data but not as policy.
   before that. Working on a branch and reviewing before merge is planned.
 - **Content the agent sends to the provider.** The broker forwards the
   agent's API requests; it does not inspect or filter their contents. If
-  the agent reads a secret from your repo and includes it in a prompt, that
-  reaches the provider.
+  the agent reads a secret from your repo that is not under `mount.exclude`
+  and includes it in a prompt, that reaches the provider.
 - **Hosts you allow.** An allowlisted host is reachable on every port and
   path, with nothing injected and nothing inspected.
 - **The provider.** Everything the agent sends to the API is visible to the

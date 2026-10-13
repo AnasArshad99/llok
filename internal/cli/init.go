@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -57,6 +58,7 @@ func setupRepo(dir string, interactive bool) (*config.Config, error) {
 		{"agent", cfg.Agent.Render()},
 		{"vm", fmt.Sprintf("%d vCPU · %d MiB", cfg.VM.CPUs, cfg.VM.MemoryMB)},
 		{"repo", dir + "  →  " + cfg.Mount.Repo + " (rw)"},
+		{"hidden", strings.Join(cfg.Mount.Exclude, ", ") + "  " + styleDim.Render("(mount.exclude)")},
 		{"network", cfg.Network.Mode + "  →  api.anthropic.com only, plus network.allow"},
 		{"policy", path},
 	}))
