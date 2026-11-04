@@ -29,6 +29,9 @@ type Config struct {
 	} `yaml:"vm"`
 	Mount struct {
 		Repo string `yaml:"repo"`
+		// ReadOnly shares the repo read-only; the agent's writes go to a
+		// scratch overlay inside the VM and vanish at power-off.
+		ReadOnly bool `yaml:"readonly"`
 		// Exclude lists repo paths (relative, shell globs) hidden inside the
 		// VM: covered with an empty read-only file or folder.
 		Exclude []string `yaml:"exclude"`
@@ -169,11 +172,15 @@ vm:
   memory_mb: %d
 
 # The repo is mounted read-write at this path inside the VM (default: its name).
+# readonly: true shares it read-only instead; the agent can still write, but
+# into a scratch layer inside the VM that is discarded at power-off, so
+# nothing reaches your files (llok --ro does the same for one run).
 # exclude: paths (relative to the repo, shell globs) the agent must not see.
 # They appear empty and read-only inside the VM; the files on your Mac are
 # untouched. Set exclude: [] to share everything.
 mount:
   repo: %s
+  readonly: %t
   exclude: %s
 
 # The guest has no network device. Its only way out is the llok broker on
@@ -204,7 +211,7 @@ session:
 #     action: notify
 #     message: lockfile changed
 rules: []
-`, c.Version, c.Name, c.Agent.Render(), c.VM.CPUs, c.VM.MemoryMB, c.Mount.Repo, renderList(c.Mount.Exclude), c.Network.Mode, c.Session.Idle))
+`, c.Version, c.Name, c.Agent.Render(), c.VM.CPUs, c.VM.MemoryMB, c.Mount.Repo, c.Mount.ReadOnly, renderList(c.Mount.Exclude), c.Network.Mode, c.Session.Idle))
 }
 
 // IdleTimeout parses session.idle; zero means disabled.

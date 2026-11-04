@@ -125,3 +125,21 @@ func TestIdleTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestReadOnlyRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	c := Default()
+	c.Name = "x"
+	c.Mount.ReadOnly = true
+	os.WriteFile(filepath.Join(dir, FileName), c.Render(), 0o644)
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Mount.ReadOnly {
+		t.Error("readonly: true did not survive a render/load round trip")
+	}
+	if Default().Mount.ReadOnly {
+		t.Error("read-only must be opt-in")
+	}
+}
