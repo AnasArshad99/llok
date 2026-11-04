@@ -29,6 +29,7 @@ func newUpCmd() *cobra.Command {
 		verbose bool
 		agentFl string
 		name    string
+		ro      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "up",
@@ -89,6 +90,7 @@ running session for the repo is attached rather than started again. With
 				return err
 			}
 			spec.nat = devNATEnabled(cmd)
+			spec.readOnly = spec.cfg.Mount.ReadOnly || ro
 			if name == "" {
 				name = session.FreeName(home, spec.cfg.Name)
 			} else if _, ok := session.Find(home, name); ok {
@@ -111,9 +113,13 @@ running session for the repo is attached rather than started again. With
 				if !interactive {
 					mode = "run  " + styleDim.Render(command)
 				}
+				mount := spec.cfg.Mount.Repo
+				if spec.readOnly {
+					mount += "  (read-only · writes discarded at power off)"
+				}
 				printBox("llok · booting locked VM", kv([][2]string{
 					{"project", spec.cfg.Name},
-					{"repo", absRepo + "  →  " + spec.cfg.Mount.Repo},
+					{"repo", absRepo + "  →  " + mount},
 					{"vm", fmt.Sprintf("%d vCPU · %d MiB · Alpine linux-virt", spec.cpus, spec.memMB)},
 					{"network", spec.cfg.Network.Mode},
 					{"mode", mode},
@@ -127,7 +133,7 @@ running session for the repo is attached rather than started again. With
 			}
 			defer rt.close()
 			session.WriteRecord(home, session.Record{Name: name, Project: spec.cfg.Name, Repo: absRepo,
-				Agent: spec.agent.Name, PID: os.Getpid(), Started: rt.startedOrNow(), CPUs: spec.cpus, MemoryMB: spec.memMB})
+				Agent: spec.agent.Name, PID: os.Getpid(), Started: rt.startedOrNow(), CPUs: spec.cpus, MemoryMB: spec.memMB, ReadOnly: spec.readOnly})
 			defer session.RemoveRecord(home, name)
 			// The guest's bytes reach a real terminal or a log: keep text
 			// and colours, drop everything that could program the terminal.
@@ -147,6 +153,7 @@ running session for the repo is attached rather than started again. With
 	cmd.Flags().BoolVar(&plain, "plain", false, "no full-screen UI; raw console in the current terminal")
 	cmd.Flags().StringVar(&agentFl, "agent", "", "agent to set this session up for (overrides llok.yaml)")
 	cmd.Flags().StringVarP(&name, "session", "s", "", "session name (default: the project name, then project-2, …)")
+	cmd.Flags().BoolVar(&ro, "ro", false, "share the repo read-only; the agent's writes are discarded at power off")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print the boot summary and run summary")
 	registerDevFlags(cmd)
 	return cmd

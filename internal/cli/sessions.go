@@ -36,8 +36,12 @@ func newSessionsCmd() *cobra.Command {
 				if !r.Attach {
 					mode = styleDim.Render("foreground in another terminal")
 				}
+				repo := shortHome(r.Repo)
+				if r.ReadOnly {
+					repo += styleWarn.Render(" ro")
+				}
 				rows = append(rows, [2]string{r.Name, fmt.Sprintf("%s · %s · up %s · %d vCPU %d MiB · %s",
-					shortHome(r.Repo), r.Agent, fmtUptime(r), r.CPUs, r.MemoryMB, mode)})
+					repo, r.Agent, fmtUptime(r), r.CPUs, r.MemoryMB, mode)})
 			}
 			fmt.Print(strings.TrimRight(kv(rows), "\n") + "\n")
 			return nil

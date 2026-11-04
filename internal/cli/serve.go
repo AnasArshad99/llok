@@ -36,6 +36,9 @@ func startServer(home string, spec runSpec, cmd *cobra.Command) error {
 	if spec.nat {
 		args = append(args, "--dev-nat")
 	}
+	if spec.readOnly {
+		args = append(args, "--ro")
+	}
 	if err := os.MkdirAll(session.Dir(home, spec.name), 0o700); err != nil {
 		return err
 	}
@@ -90,6 +93,7 @@ func newServeCmd() *cobra.Command {
 		cpus                uint
 		memMB               uint64
 		cols, rows          int
+		ro                  bool
 	)
 	cmd := &cobra.Command{
 		Use:    "_serve",
@@ -121,7 +125,8 @@ func newServeCmd() *cobra.Command {
 			if memMB == 0 {
 				memMB = cfg.VM.MemoryMB
 			}
-			spec := runSpec{cfg: cfg, absRepo: repo, agent: agent, cpus: cpus, memMB: memMB, name: name, nat: devNATEnabled(cmd)}
+			spec := runSpec{cfg: cfg, absRepo: repo, agent: agent, cpus: cpus, memMB: memMB, name: name,
+				nat: devNATEnabled(cmd), readOnly: cfg.Mount.ReadOnly || ro}
 			return serveSession(home, spec, cols, rows)
 		},
 	}
@@ -132,6 +137,7 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().Uint64Var(&memMB, "mem", 0, "")
 	cmd.Flags().IntVar(&cols, "cols", 0, "")
 	cmd.Flags().IntVar(&rows, "rows", 0, "")
+	cmd.Flags().BoolVar(&ro, "ro", false, "")
 	registerDevFlags(cmd)
 	return cmd
 }
@@ -145,7 +151,7 @@ func serveSession(home string, spec runSpec, cols, rows int) error {
 	defer rt.close()
 	started := time.Now()
 	if err := session.WriteRecord(home, session.Record{Name: spec.name, Project: spec.cfg.Name, Repo: spec.absRepo,
-		Agent: spec.agent.Name, PID: os.Getpid(), Started: started, Attach: true, CPUs: spec.cpus, MemoryMB: spec.memMB}); err != nil {
+		Agent: spec.agent.Name, PID: os.Getpid(), Started: started, Attach: true, CPUs: spec.cpus, MemoryMB: spec.memMB, ReadOnly: spec.readOnly}); err != nil {
 		return err
 	}
 	defer session.RemoveRecord(home, spec.name)
@@ -163,6 +169,7 @@ func serveSession(home string, spec runSpec, cols, rows int) error {
 		Kernel:    guest.KernelVersion(),
 		Session:   spec.name,
 		Started:   started,
+		ReadOnly:  spec.readOnly,
 	})
 	powerOff := make(chan struct{}, 1)
 	requestPowerOff := func() {

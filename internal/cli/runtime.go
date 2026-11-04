@@ -30,14 +30,15 @@ import (
 // starts: the foreground command asks its questions first, then either
 // runs in place or hands the spec to a background session process.
 type runSpec struct {
-	cfg     *config.Config
-	absRepo string
-	agent   agents.Agent
-	cpus    uint
-	memMB   uint64
-	command string // non-empty: run it in the repo and power off
-	name    string // session name (run directory, sockets, ledger)
-	nat     bool   // developer builds only
+	cfg      *config.Config
+	absRepo  string
+	agent    agents.Agent
+	cpus     uint
+	memMB    uint64
+	command  string // non-empty: run it in the repo and power off
+	name     string // session name (run directory, sockets, ledger)
+	nat      bool   // developer builds only
+	readOnly bool   // share the repo read-only with a scratch overlay
 }
 
 // runtime is one prepared run: broker, supervisor, feed, control channel
@@ -182,18 +183,19 @@ func newRuntime(spec runSpec) (*runtime, error) {
 	}
 
 	rt.opts = vm.Options{
-		Kernel:      kernel,
-		Initrd:      initrd,
-		Repo:        spec.absRepo,
-		RepoPath:    cfg.Mount.Repo,
-		Name:        cfg.Name,
-		CPUs:        spec.cpus,
-		MemoryMB:    spec.memMB,
-		Command:     spec.command,
-		Interactive: spec.command == "",
-		NAT:         spec.nat,
-		AgentBinary: agent.Binary,
-		ShareDir:    shareDir,
+		Kernel:       kernel,
+		Initrd:       initrd,
+		Repo:         spec.absRepo,
+		RepoPath:     cfg.Mount.Repo,
+		RepoReadOnly: spec.readOnly,
+		Name:         cfg.Name,
+		CPUs:         spec.cpus,
+		MemoryMB:     spec.memMB,
+		Command:      spec.command,
+		Interactive:  spec.command == "",
+		NAT:          spec.nat,
+		AgentBinary:  agent.Binary,
+		ShareDir:     shareDir,
 	}
 	if rootfs, ok := guest.RootfsPath(); ok {
 		rt.opts.Disk = rootfs
@@ -225,7 +227,7 @@ func newRuntime(spec runSpec) (*runtime, error) {
 	}
 	rt.cleanups = append(rt.cleanups, func() { rt.feed.Close() })
 	rt.bus.Emit(events.Event{Type: events.TypeSession, Phase: "start", Agent: agent.Name,
-		Repo: spec.absRepo, VMRepo: cfg.Mount.Repo, PID: os.Getpid()})
+		Repo: spec.absRepo, VMRepo: cfg.Mount.Repo, ReadOnly: spec.readOnly, PID: os.Getpid()})
 
 	stopWatch, err := watch.Start(spec.absRepo, func(p, op string) {
 		rt.touch()

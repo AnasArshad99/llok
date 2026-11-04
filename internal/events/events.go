@@ -42,6 +42,7 @@ type Event struct {
 	Agent      string `json:"agent,omitempty"`
 	Repo       string `json:"repo,omitempty"`    // host path
 	VMRepo     string `json:"vm_repo,omitempty"` // path inside the VM
+	ReadOnly   bool   `json:"read_only,omitempty"`
 	PID        int    `json:"pid,omitempty"`
 	Exit       *int   `json:"exit,omitempty"`
 	DurationMS int64  `json:"duration_ms,omitempty"`

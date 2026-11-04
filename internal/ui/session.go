@@ -33,6 +33,7 @@ type Info struct {
 	CPUs      uint
 	MemoryMB  uint64
 	Kernel    string
+	ReadOnly  bool      // repo shared read-only; the agent's writes are discarded
 	Session   string    // session name, when the VM runs detached from this terminal
 	Started   time.Time // when the VM started (zero: now)
 	Others    int       // other sessions running on this machine
@@ -773,7 +774,7 @@ func (s *Session) panelLines() []string {
 		kv("project", s.info.Project),
 		kv("agent", s.info.Agent),
 		kv("repo", shortPath(s.info.RepoHost, s.panelW-11)),
-		kv("mount", s.info.RepoVM+sDim.Render(" rw")+s.hiddenDesc()),
+		kv("mount", s.info.RepoVM+s.modeDesc()+s.hiddenDesc()),
 		kv("vm", fmt.Sprintf("%d vCPU · %s", s.info.CPUs, mem)),
 		kv("kernel", s.info.Kernel),
 		kv("rootfs", shortRootfs(s.rootfs)),
@@ -810,6 +811,13 @@ func (s *Session) panelLines() []string {
 		}
 	}
 	return lines
+}
+
+func (s *Session) modeDesc() string {
+	if s.info.ReadOnly {
+		return sWarn.Render(" ro") + sDim.Render(" · scratch")
+	}
+	return sDim.Render(" rw")
 }
 
 func (s *Session) hiddenDesc() string {

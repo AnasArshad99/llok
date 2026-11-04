@@ -356,6 +356,7 @@ type Record struct {
 	PID      int       `json:"pid"`
 	Started  time.Time `json:"started"`
 	Attach   bool      `json:"attach"` // false for a foreground (plain or -c) run
+	ReadOnly bool      `json:"read_only,omitempty"`
 	CPUs     uint      `json:"cpus"`
 	MemoryMB uint64    `json:"memory_mb"`
 }

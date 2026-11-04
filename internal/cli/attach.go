@@ -43,6 +43,7 @@ func attachLoop(home, name string) error {
 				return err
 			}
 			spec.name = session.FreeName(home, spec.cfg.Name)
+			spec.readOnly = spec.cfg.Mount.ReadOnly || r.ReadOnly
 			if err := startServer(home, spec, nil); err != nil {
 				return err
 			}
