@@ -47,6 +47,44 @@ BANNER=$(cmdline_val llok.banner)
 BROKER=$(cmdline_val llok.broker)
 AGENT_BIN=$(cmdline_val llok.agent)
 ROOT=$(cmdline_val llok.root)
+RO=$(cmdline_val llok.ro)
+
+# mount_repo TARGET mounts the host's repo share. Read-only sessions get
+# the share (which the hypervisor already refuses writes to) as the lower
+# layer of an overlay whose upper layer is memory: the agent can build and
+# edit, and all of it vanishes at power-off.
+mount_repo() {
+  if [ "$RO" = 1 ]; then
+    mkdir -p /run/llok-repo/lower /run/llok-repo/scratch
+    mount -t virtiofs -o ro repo /run/llok-repo/lower || return 1
+    mount -t tmpfs tmpfs /run/llok-repo/scratch || return 1
+    mkdir -p /run/llok-repo/scratch/upper /run/llok-repo/scratch/work /run/llok-repo/mapped
+    # The share reports every file as root's, and the session user could
+    # not edit them. An idmapped view of the share shows root's files as
+    # the session user's at no per-file cost; failing that, the merged
+    # tree is handed over file by file after the mount (metadata only,
+    # but slow on big repos).
+    LOWER=/run/llok-repo/lower; FIXUP=0
+    if /usr/local/bin/llok-guest idmap /run/llok-repo/lower /run/llok-repo/mapped 1000 2>/dev/null; then
+      LOWER=/run/llok-repo/mapped
+      echo "llok: read-only repo: idmapped overlay" >&2
+    else
+      FIXUP=1
+      echo "llok: read-only repo: overlay with per-file ownership fixup" >&2
+    fi
+    OPTS="lowerdir=$LOWER,upperdir=/run/llok-repo/scratch/upper,workdir=/run/llok-repo/scratch/work"
+    [ "$FIXUP" = 1 ] && OPTS="$OPTS,redirect_dir=on,metacopy=on"
+    mount -t overlay overlay -o "$OPTS" "$1" || return 1
+    if [ "$FIXUP" = 1 ]; then
+      # One FUSE round trip per file; run several walkers so the share's
+      # latency overlaps. Metadata only (metacopy), never file contents.
+      find "$1" -print0 2>/dev/null | xargs -0 -P 8 -n 400 chown -h 1000:1000 2>/dev/null
+    fi
+    return 0
+  else
+    mount -t virtiofs repo "$1"
+  fi
+}
 
 # ---- build mode: install the rootfs onto /dev/vda (network allowed) --------
 if [ "$MODE" = build ] && [ "$STAGE" = 1 ]; then
@@ -69,7 +107,7 @@ if [ "$STAGE" = 1 ] && [ "$ROOT" = 1 ]; then
   mkdir -p /newroot/etc/llok /newroot/usr/local/bin "/newroot$REPO"
   cp /init /newroot/etc/llok/init
   cp /usr/local/bin/llok-guest /newroot/usr/local/bin/llok-guest 2>/dev/null
-  mount -t virtiofs repo "/newroot$REPO" || echo "llok: failed to mount repo share" >&2
+  mount_repo "/newroot$REPO" || echo "llok: failed to mount repo share" >&2
   for d in dev proc sys run tmp; do
     mkdir -p "/newroot/$d"
     mount --move "/$d" "/newroot/$d"
@@ -82,12 +120,13 @@ t "session stage start"
 # ---- session (stage 2 on a root disk, or stage 1 initramfs-only) -----------
 if [ "$STAGE" = 1 ]; then
   mkdir -p "$REPO"
-  mount -t virtiofs repo "$REPO" || echo "llok: failed to mount repo share" >&2
+  mount_repo "$REPO" || echo "llok: failed to mount repo share" >&2
   ROOTFS_DESC="initramfs, discarded at power off"
 else
   ROOTFS_DESC="$(cat /etc/llok/rootfs-info 2>/dev/null || echo alpine) · overlay, discarded at power off"
 fi
 MOUNT_STATE="virtiofs, rw"
+[ "$RO" = 1 ] && MOUNT_STATE="virtiofs, read-only · writes go to memory, discarded at power off"
 mountpoint -q "$REPO" || MOUNT_STATE="FAILED"
 
 # Paths the policy hides from the agent (/run/llok/exclude.txt, one glob per

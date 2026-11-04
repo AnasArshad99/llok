@@ -29,6 +29,12 @@ func main() {
 	case "exit":
 		sendExit(os.Args[2:])
 		return
+	case "idmap":
+		idmap(os.Args[2:])
+		return
+	case "idmap-hold":
+		idmapHold()
+		return
 	}
 	if os.Args[1] != "proxy" {
 		fmt.Fprintln(os.Stderr, "usage: llok-guest proxy|control|exit [flags]")

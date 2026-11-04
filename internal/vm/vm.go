@@ -21,6 +21,7 @@ type Options struct {
 	Kernel, Initrd string
 	Repo           string // host directory shared into the guest
 	RepoPath       string // where the guest mounts it (default /repo)
+	RepoReadOnly   bool   // share the repo read-only; the guest overlays scratch space
 	Name           string // project name, shown in the guest prompt
 	CPUs           uint
 	MemoryMB       uint64
@@ -133,6 +134,9 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	if o.Mode != "" {
 		cmdline += " llok.mode=" + o.Mode
 	}
+	if o.RepoReadOnly {
+		cmdline += " llok.ro=1"
+	}
 	if o.RootDisk {
 		cmdline += " llok.root=1"
 	}
@@ -194,8 +198,10 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	}
 	cfg.SetEntropyDevicesVirtualMachineConfiguration([]*vz.VirtioEntropyDeviceConfiguration{entropy})
 
-	// The repo is the only thing from the host the guest can see.
-	shared, err := vz.NewSharedDirectory(o.Repo, false)
+	// The repo is the only thing from the host the guest can see. Read-only
+	// is enforced here, by the hypervisor; the guest layers scratch space
+	// on top so the agent can still build and edit inside.
+	shared, err := vz.NewSharedDirectory(o.Repo, o.RepoReadOnly)
 	if err != nil {
 		return res, err
 	}
