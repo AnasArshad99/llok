@@ -68,6 +68,7 @@ llok gives each agent session its own throwaway virtual machine with **no networ
 - **Credentials never enter the VM.** The agent gets a placeholder; the broker on your Mac swaps in the real key from the Keychain on the way out. Sign in once with `llok auth`.
 - **One audited exit.** Provider hosts are allowed with credential injection; anything else needs a line in `llok.yaml`. Every decision lands in `~/.llok/audit/broker.jsonl`.
 - **Secrets stay invisible.** `mount.exclude` hides `.env`, `*.pem`, `*.key` and anything you name: empty and read-only inside the VM, untouched on your Mac.
+- **Read-only sessions.** `llok --ro` shares the repo read-only; the agent still builds and edits, into a scratch layer that vanishes at power-off. For "explain this codebase" and review runs where nothing should change.
 - **A supervisor outside the VM.** Rules over what the host can see (repo file changes, broker decisions) pause or stop the VM: git hooks written, mass deletes, CI config changes.
 - **Sessions that outlive the terminal.** Detach, close the tab, come back from another terminal; the agent keeps working. Switch between sessions with one key.
 - **A live event feed.** Every session streams JSON events on a local socket and accepts pause, resume and kill from outside, so other tools can watch and act.
@@ -106,6 +107,7 @@ The mouse is llok's while a session is open: the wheel scrolls the VM's history,
 | `llok` | Start a session, or attach to the one running for this repo. `exit` powers off |
 | `llok --agent codex` | Same, set up for a different default agent than `llok.yaml` says |
 | `llok -s review` | Start or attach to a session by name; several can run on one repo |
+| `llok --ro` | Read-only session: the agent's writes stay inside the VM and are discarded at power-off |
 | `llok sessions` / `attach` / `kill` | List, join, or stop sessions (`kill --all` stops every one) |
 | `llok up -c 'make test'` | Run one command in the VM and return its exit code |
 | `llok up --plain` | Raw console in the current terminal, no panel |
@@ -130,6 +132,7 @@ vm:
 
 mount:
   repo: /my-app               # where your folder appears inside the VM (default: its name)
+  readonly: false             # true: writes go to a scratch layer discarded at power-off
   exclude:                    # repo paths the agent must not see (shell globs)
     - .env                    # defaults: .env, .env.*, *.pem, *.key
     - secrets
@@ -179,7 +182,7 @@ A pause freezes the VM in place and the panel asks `[r] resume  [K] kill`. With 
 
 | | |
 |---|---|
-| Read and write your repo | yes, and only your repo, minus `mount.exclude` |
+| Read and write your repo | yes, and only your repo, minus `mount.exclude`. With `--ro`, writes never leave the VM |
 | Read `.env` or anything under `mount.exclude` | no. Those paths are empty and read-only inside the VM |
 | Reach the provider API | yes, through the broker, with your credential injected there |
 | Reach any other host | only if listed under `network.allow` |
@@ -216,6 +219,7 @@ The same socket takes `{"op":"pause"}`, `{"op":"resume"}` and `{"op":"kill"}`, s
 |---|---|
 | **Hypervisor** | Apple's Virtualization framework, driven from Go. Boot to a ready shell in about 0.2 s |
 | **Guest** | Alpine's `linux-virt` kernel, a 6 MB initramfs with llok's init, an ext4 root disk with bash, git, Node, ripgrep and every built-in agent. Mounted read-only with a tmpfs overlay; the session runs as an unprivileged user |
+| **Read-only repo** | The share is read-only at the hypervisor and the guest overlays a tmpfs on it, so the agent's edits exist only in VM memory. The share reports files as root's, so the guest hands the merged tree to the session user (metadata only, about 1.5 s per 10k files) |
 | **Image build** | `llok guest build` boots a one-off builder VM with NAT to install packages: the only VM that ever gets a network device, and it never sees a repo. Every input is pinned in `internal/guest/versions.yaml` with its SHA-256; the build writes a manifest and `llok` refuses an image that does not match it |
 | **Broker** | A guest-side forwarder sends `127.0.0.1:3128` over vsock to llok. Provider hosts are terminated with a local CA the guest trusts and the real credential is injected in the header each provider expects; other allowed hosts get a plain tunnel |
 | **Sessions** | The VM runs in a background llok process that keeps console history, the supervisor and the feed, served on `~/.llok/run/<session>/console.sock`. The terminal is a thin client: attaching replays recent output into a fresh emulator and resizes the guest so full-screen programs redraw |
@@ -224,7 +228,7 @@ The same socket takes `{"op":"pause"}`, `{"op":"resume"}` and `{"op":"kill"}`, s
 ## Roadmap
 
 - Session limits: wall-clock, request count, bytes out
-- Read-only sessions and results returned as a branch for review
+- Results returned as a branch for review
 - Headless `llok run --json` for CI and scripts
 - Signed installer and Homebrew tap
 - Snapshot warm starts; a Linux backend on Firecracker

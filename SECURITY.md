@@ -54,6 +54,11 @@ trusted as data but not as policy.
   once per repo before they take effect, and again after any change. Inside
   the guest the file is mounted read-only, so the agent cannot edit or
   remove it, and a write to it pauses the session as a backstop.
+- **Changes you did not want.** `llok --ro` (or `mount.readonly: true`)
+  shares the repo read-only at the hypervisor; the agent writes into a
+  memory overlay inside the guest that is gone at power-off. Nothing the
+  agent does in such a session reaches your files, including through the
+  build and install scripts described below.
 - **Secrets kept in the repo folder.** Paths under `mount.exclude` (`.env`,
   `.env.*`, `*.pem`, `*.key` by default) are covered inside the guest by an
   empty read-only file or folder before the session drops to the agent
